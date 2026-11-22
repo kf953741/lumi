@@ -452,9 +452,33 @@ final class MonitorStore: ObservableObject {
         }
     }
 
-    func openSession(byId id: String) {
+    @discardableResult
+    func openSession(byId id: String) -> Bool {
         if let session = allSessions.first(where: { $0.id == id }) {
             _ = openSession(session)
+            return true
+        }
+        if id.hasPrefix("t3code:") {
+            let rawId = String(id.dropFirst("t3code:".count))
+            if let url = t3Scanner.deepLinkURL(forThreadId: rawId) {
+                dismissJumpHint()
+                NSApp.keyWindow?.resignKey()
+                jumpLogger.info("Jumping to T3 Code thread (byId fallback) via deep link \(url.absoluteString, privacy: .public)")
+                openDeepLink(url, bundleIDs: AgentKind.t3code.targetBundleIDs)
+                return true
+            }
+        }
+        return false
+    }
+
+    private func deepLinkString(for session: AgentSession) -> String? {
+        switch session.kind {
+        case .codex:
+            return session.rawId.isEmpty ? nil : "codex://threads/\(session.rawId)"
+        case .t3code:
+            return t3Scanner.deepLinkURL(forThreadId: session.rawId)?.absoluteString
+        default:
+            return nil
         }
     }
 
@@ -527,6 +551,12 @@ final class MonitorStore: ObservableObject {
         case .t3code:
             dismissJumpHint()
             NSApp.keyWindow?.resignKey()
+            if let url = t3Scanner.deepLinkURL(forThreadId: session.rawId) {
+                jumpLogger.info("Jumping to T3 Code thread via deep link \(url.absoluteString, privacy: .public)")
+                openDeepLink(url, bundleIDs: session.kind.targetBundleIDs)
+                return true
+            }
+            jumpLogger.info("Jumping to T3 Code app without deep link rawId=\(session.rawId, privacy: .public)")
             let queryTitle = Self.cleanSearchQuery(from: session.title)
             activateApp(bundleIDs: session.kind.targetBundleIDs) {
                 guard !queryTitle.isEmpty else { return }
@@ -549,6 +579,25 @@ final class MonitorStore: ObservableObject {
 
     func openApp(for kind: AgentKind) {
         activateApp(bundleIDs: kind.targetBundleIDs)
+    }
+
+    private func openDeepLink(_ url: URL, bundleIDs: [String]) {
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        NSWorkspace.shared.open(url, configuration: cfg) { [weak self] app, error in
+            if let error {
+                self?.jumpLogger.error("Deep link open failed for \(url.absoluteString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                DispatchQueue.main.async {
+                    self?.activateApp(bundleIDs: bundleIDs)
+                }
+                return
+            }
+            if let app {
+                DispatchQueue.main.async {
+                    app.activate()
+                }
+            }
+        }
     }
 
     private func activateApp(bundleIDs: [String], onActivated: (() -> Void)? = nil) {
@@ -855,7 +904,7 @@ final class MonitorStore: ObservableObject {
                     postNotification(
                         id: "input-\(item.id)-\(Int(item.updatedAt.timeIntervalSince1970))",
                         sessionId: item.id,
-                        deepLink: item.kind == .codex ? "codex://threads/\(item.rawId)" : nil,
+                        deepLink: deepLinkString(for: item),
                         title: t.needsInputNotifTitle(kind: item.kind, project: t.project(item.project)),
                         subtitle: item.title,
                         body: t.needsInputNotifBody(kind: item.kind),
@@ -875,7 +924,7 @@ final class MonitorStore: ObservableObject {
                         postNotification(
                             id: "\(item.id)-\(Int((item.completedAt ?? now).timeIntervalSince1970))",
                             sessionId: item.id,
-                            deepLink: item.kind == .codex ? "codex://threads/\(item.rawId)" : nil,
+                            deepLink: deepLinkString(for: item),
                             title: t.finishNotifTitle(kind: item.kind, project: t.project(item.project), isError: item.status == .error),
                             subtitle: item.title,
                             body: t.finishNotifBody(kind: item.kind),

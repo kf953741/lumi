@@ -116,25 +116,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let info = response.notification.request.content.userInfo
-        if let sessionId = info["sessionId"] as? String {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+        let sessionId = info["sessionId"] as? String
+        let deepLink = info["deepLink"] as? String
+        let bundleID = info["bundleID"] as? String
+
+        DispatchQueue.main.async { [weak self] in
+            defer { completionHandler() }
+            if let self, let sessionId {
                 self.store.markRead(byId: sessionId)
-                self.store.openSession(byId: sessionId)
+                if self.store.openSession(byId: sessionId) {
+                    return
+                }
             }
-            completionHandler()
-            return
+            if let deepLink, let url = URL(string: deepLink) {
+                let cfg = NSWorkspace.OpenConfiguration()
+                cfg.activates = true
+                NSWorkspace.shared.open(url, configuration: cfg) { app, _ in
+                    if let app {
+                        DispatchQueue.main.async { app.activate() }
+                    }
+                }
+                return
+            }
+            if let bundleID,
+               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                let cfg = NSWorkspace.OpenConfiguration()
+                cfg.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: cfg, completionHandler: nil)
+            }
         }
-        if let deepLink = info["deepLink"] as? String, let url = URL(string: deepLink) {
-            NSWorkspace.shared.open(url)
-        }
-        if let bundleID = info["bundleID"] as? String,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            let cfg = NSWorkspace.OpenConfiguration()
-            cfg.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: cfg, completionHandler: nil)
-        }
-        completionHandler()
     }
 
     private func registerGlobalHotKey(preset: GlobalHotKeyPreset) {

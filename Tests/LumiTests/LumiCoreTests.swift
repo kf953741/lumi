@@ -360,4 +360,51 @@ final class LumiCoreTests: XCTestCase {
         let realStandalone = makeSession(kind: .codex, rawId: "standalone-codex-id", cwd: "/Users/test/MyRepo", startedAt: now.addingTimeInterval(-120))
         XCTAssertFalse(res.ownsUnderlying(realStandalone))
     }
+
+    func testT3CodeDeepLinkEncodesThreadIdsAndReadsSiblingEnvironmentId() throws {
+        // 1. Plain UUID thread ID
+        let uuidUrl = T3CodeScanner.deepLinkURL(
+            environmentId: "412f7ce2-4663-4a5e-a547-d0c1f060808d",
+            threadId: "36999499-43c0-4845-8fdf-a50c85c7b97b"
+        )
+        XCTAssertEqual(
+            uuidUrl?.absoluteString,
+            "t3code://threads/412f7ce2-4663-4a5e-a547-d0c1f060808d/36999499-43c0-4845-8fdf-a50c85c7b97b"
+        )
+
+        // 2. Colon-delimited MCP/imported thread IDs must percent-encode ':' -> '%3A'
+        let mcpUrl = T3CodeScanner.deepLinkURL(
+            environmentId: "412f7ce2-4663-4a5e-a547-d0c1f060808d",
+            threadId: "mcp:launch:af6eda900c71bfdebf15f3c90f174b2982cd7468e21a5c9ec5e2600e55165bbb",
+            scheme: "t3code-dev"
+        )
+        XCTAssertEqual(
+            mcpUrl?.absoluteString,
+            "t3code-dev://threads/412f7ce2-4663-4a5e-a547-d0c1f060808d/mcp%3Alaunch%3Aaf6eda900c71bfdebf15f3c90f174b2982cd7468e21a5c9ec5e2600e55165bbb"
+        )
+
+        // 3. Empty inputs return nil
+        XCTAssertNil(T3CodeScanner.deepLinkURL(environmentId: "  ", threadId: "abc"))
+        XCTAssertNil(T3CodeScanner.deepLinkURL(environmentId: "env-1", threadId: ""))
+
+        // 4. Instance helper reads sibling `environment-id` file next to `statev2.sqlite`
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-envid-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let dbPath = dir.appendingPathComponent("statev2.sqlite").path
+        let scanner = T3CodeScanner(v2DbPath: dbPath, v1DbPath: dir.appendingPathComponent("none.sqlite").path, isT3RunningCheck: { true })
+        XCTAssertNil(scanner.deepLinkURL(forThreadId: "import:codex:abc-123", scheme: "t3code"))
+
+        try "412f7ce2-4663-4a5e-a547-d0c1f060808d\n".write(
+            to: dir.appendingPathComponent("environment-id"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(
+            scanner.deepLinkURL(forThreadId: "import:codex:abc-123", scheme: "t3code")?.absoluteString,
+            "t3code://threads/412f7ce2-4663-4a5e-a547-d0c1f060808d/import%3Acodex%3Aabc-123"
+        )
+    }
 }

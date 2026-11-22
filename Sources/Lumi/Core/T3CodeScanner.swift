@@ -47,7 +47,14 @@ struct T3CodeScanResult: Sendable {
 final class T3CodeScanner: @unchecked Sendable {
     private let v2DbPath: String
     private let v1DbPath: String
+    private let environmentIdPath: String
     private let isT3RunningCheck: @Sendable () -> Bool
+
+    private static let pathSegmentAllowedCharacters: CharacterSet = {
+        var set = CharacterSet.alphanumerics
+        set.insert(charactersIn: "-_.~")
+        return set
+    }()
 
     private static let isoFracFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -64,13 +71,59 @@ final class T3CodeScanner: @unchecked Sendable {
     init(
         v2DbPath: String = "\(NSHomeDirectory())/.t3/userdata/statev2.sqlite",
         v1DbPath: String = "\(NSHomeDirectory())/.t3/userdata/state.sqlite",
+        environmentIdPath: String? = nil,
         isT3RunningCheck: (@Sendable () -> Bool)? = nil
     ) {
         self.v2DbPath = v2DbPath
         self.v1DbPath = v1DbPath
+        self.environmentIdPath = environmentIdPath ?? URL(fileURLWithPath: v2DbPath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("environment-id")
+            .path
         self.isT3RunningCheck = isT3RunningCheck ?? {
             Self.isT3CodeAppRunning()
         }
+    }
+
+    func readEnvironmentId() -> String? {
+        guard let raw = try? String(contentsOfFile: environmentIdPath, encoding: .utf8) else {
+            return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Builds T3 Code's official `t3code://threads/<environmentId>/<encodedThreadId>` deep link
+    /// (parsed by T3 Code's `promptLinkAppPath` -> `DesktopWebLinks.receive` -> `/$environmentId/$threadId`).
+    static func deepLinkURL(environmentId: String, threadId: String, scheme: String = "t3code") -> URL? {
+        let env = environmentId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tid = threadId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !env.isEmpty, !tid.isEmpty,
+              let encodedEnv = env.addingPercentEncoding(withAllowedCharacters: pathSegmentAllowedCharacters),
+              let encodedTid = tid.addingPercentEncoding(withAllowedCharacters: pathSegmentAllowedCharacters) else {
+            return nil
+        }
+        return URL(string: "\(scheme)://threads/\(encodedEnv)/\(encodedTid)")
+    }
+
+    func deepLinkURL(forThreadId threadId: String, scheme: String? = nil) -> URL? {
+        guard let envId = readEnvironmentId() else { return nil }
+        let resolvedScheme = scheme ?? Self.preferredURLScheme()
+        return Self.deepLinkURL(environmentId: envId, threadId: threadId, scheme: resolvedScheme)
+    }
+
+    private static func preferredURLScheme() -> String {
+        let prodRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.t3tools.t3code").isEmpty
+        if prodRunning { return "t3code" }
+        let devRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.t3tools.t3code.dev").isEmpty
+        if devRunning { return "t3code-dev" }
+        if NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.t3tools.t3code") != nil {
+            return "t3code"
+        }
+        if NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.t3tools.t3code.dev") != nil {
+            return "t3code-dev"
+        }
+        return "t3code"
     }
 
     func scan(lookbackHours: Double = 24, now: Date = Date()) -> [AgentSession] {
