@@ -48,6 +48,14 @@ When you run 5–10 AI coding conversations in parallel across **Antigravity**, 
 
 ## Visual Tour
 
+### Live Interactive Preview
+
+Hover the MacBook notch to expand, watch Lumi code with glowing headphones, jump with confetti when a task completes, and single-click any Unread card to jump straight back to the conversation and auto-mark it read.
+
+<div align="center">
+  <img src="docs/assets/lumi-demo.gif" width="92%" alt="Lumi Live Interactive Demo Animation" />
+</div>
+
 ### 1. Dynamic Notch Island ↔ Floating Desktop Board
 
 Hover over your MacBook's hardware notch to unfold a high-contrast smoked obsidian **Studio Bento** control center. Working on an external display or want a persistent side monitor? Click **Desktop Mode** to detach into a translucent always-on-top floating board that follows you across macOS Spaces.
@@ -94,7 +102,18 @@ Lumi is drawn entirely with vector SwiftUI `Canvas` (no heavy GIFs or Lottie bun
 - **macOS 14.0+ (Sonoma or newer)** on Apple Silicon or Intel
 - For building from source: Xcode Command Line Tools (`xcode-select --install`)
 
-### Option 1: Build & Install from Source (Recommended — 30 Seconds)
+### Option 1: Install via Homebrew Cask (Fastest)
+
+```bash
+brew tap kf953741/lumi https://github.com/kf953741/lumi
+brew install --cask kf953741/lumi/lumi
+```
+
+### Option 2: Download Prebuilt `.dmg`
+
+Download the latest `Lumi-vX.Y.Z-arm64.dmg` from [GitHub Releases](https://github.com/kf953741/lumi/releases), drag **Lumi.app** into **Applications**, and launch.
+
+### Option 3: Build & Install from Source (30 Seconds)
 
 ```bash
 git clone https://github.com/kf953741/lumi.git
@@ -110,10 +129,6 @@ swift test
 # Launch Lumi
 open -a /Applications/Lumi.app
 ```
-
-### Option 2: Download Prebuilt `.dmg`
-
-Download the latest `Lumi-vX.Y.Z-arm64.dmg` from [GitHub Releases](https://github.com/kf953741/lumi/releases), drag **Lumi.app** into **Applications**, and launch.
 
 > **Note:** To package your own distributable `.dmg` with SHA-256 checksum:
 > ```bash
@@ -215,7 +230,7 @@ macOS ties Accessibility TCC grants to the app's code signature. If you previous
 - [x] Zero-config local scanners for Antigravity, Codex (Desktop & CLI), and Claude Code
 - [x] 1-click Hook installer for 6 AI coding agents
 - [x] Exact conversation jump (`codex://` + Antigravity `⌘K`)
-- [ ] Homebrew Cask formula (`brew install --cask lumi`)
+- [x] Homebrew Cask formula (`brew tap kf953741/lumi https://github.com/kf953741/lumi && brew install --cask kf953741/lumi/lumi`)
 - [ ] Full English / Chinese UI localization toggle
 - [ ] Optional per-agent notification sound customization & keyboard shortcut to toggle board
 

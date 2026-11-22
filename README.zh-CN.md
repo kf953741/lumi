@@ -48,6 +48,14 @@
 
 ## 核心界面一览
 
+### 实时交互动效预览
+
+悬停 MacBook 刘海丝滑展开 → Lumi 戴发光耳机写代码、实时计时 → 任务完工跃起抛彩带进入「待查看」→ 单击直接跳回原对话并自动已读。
+
+<div align="center">
+  <img src="docs/assets/lumi-demo.gif" width="92%" alt="Lumi 实时交互动效演示" />
+</div>
+
 ### 1. 刘海灵动岛 ↔ 桌面悬浮看板，双形态一键切换
 
 平时安静贴合在 MacBook 摄像头刘海两侧，鼠标轻悬即可丝滑展开高对比度烟熏黑曜石 **Studio Bento** 面板；接了外接显示器或想把看板常驻在屏幕一角时，点一下 **「桌面模式」** 就能弹出跨桌面 Space 跟随的半透明悬浮窗。
@@ -94,7 +102,18 @@
 - **macOS 14.0（Sonoma）或更新版本**（Apple Silicon / Intel 均可）
 - 源码构建需要 Xcode 命令行工具（`xcode-select --install`）
 
-### 方式一：源码一键构建安装（推荐，约 30 秒）
+### 方式一：Homebrew 一键安装（最快）
+
+```bash
+brew tap kf953741/lumi https://github.com/kf953741/lumi
+brew install --cask kf953741/lumi/lumi
+```
+
+### 方式二：下载预编译 `.dmg` 安装包
+
+前往 [GitHub Releases](https://github.com/kf953741/lumi/releases) 下载最新版 `Lumi-vX.Y.Z-arm64.dmg`，将 **Lumi.app** 拖入「应用程序」文件夹即可运行。
+
+### 方式三：源码一键构建安装（约 30 秒）
 
 ```bash
 git clone https://github.com/kf953741/lumi.git
@@ -110,10 +129,6 @@ swift test
 # 启动 Lumi
 open -a /Applications/Lumi.app
 ```
-
-### 方式二：下载预编译 `.dmg` 安装包
-
-前往 [GitHub Releases](https://github.com/kf953741/lumi/releases) 下载最新版 `Lumi-vX.Y.Z-arm64.dmg`，将 **Lumi.app** 拖入「应用程序」文件夹即可运行。
 
 > **自行打包发布 `.dmg`（含 SHA-256 校验值）：**
 > ```bash
@@ -215,7 +230,7 @@ macOS 会将辅助功能权限绑定到应用的签名标识。如果之前运�
 - [x] Antigravity、Codex（桌面版 & CLI）、Claude Code 零配置自动监测
 - [x] 6 大 AI 编程工具一键 Hook 安装与安全备份
 - [x] 精准对话跳转（Codex 原生深链 + Antigravity 官方 `⌘K`）
-- [ ] Homebrew Cask 一键安装（`brew install --cask lumi`）
+- [x] Homebrew Cask 一键安装（`brew tap kf953741/lumi https://github.com/kf953741/lumi && brew install --cask kf953741/lumi/lumi`）
 - [ ] 界面中/英文语言一键切换
 - [ ] 分平台自定义提示音 & 全局快捷键呼出面板
 
