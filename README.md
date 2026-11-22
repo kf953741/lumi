@@ -6,7 +6,7 @@
 
 **A glowing Dynamic Notch & Desktop Mission Control for your AI coding agents on macOS.**
 
-*Antigravity · Codex (Desktop & CLI) · Claude Code · Cursor · Gemini CLI · OpenCode*
+*Antigravity · Codex (Desktop & CLI) · Claude Code · T3 Code · Cursor · Gemini CLI · OpenCode*
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -26,7 +26,7 @@
 
 ## Why Lumi?
 
-When you run 5–10 AI coding conversations in parallel across **Antigravity**, **Codex**, and **Claude Code**, existing notch widgets fall short in three frustrating ways:
+When you run 5–10 AI coding conversations in parallel across **Antigravity**, **Codex**, **Claude Code**, and **T3 Code**, existing notch widgets fall short in three frustrating ways:
 
 1. **Every dialog gets squashed into one generic pill** — multiple sessions in the same repo collide under `lib` or `src`, so you never know *which* conversation is working.
 2. **Completion banners vanish in 5 seconds** — glance away or switch Spaces, and you lose track of which window just finished.
@@ -38,11 +38,11 @@ When you run 5–10 AI coding conversations in parallel across **Antigravity**, 
 | :--- | :--- | :--- |
 | **Per-Dialog Visibility** | One shared pill per client | **Every standalone dialog gets its own hairline row** — real sidebar title, smart project name (`aurora-engine/src`), live tool action, and elapsed timer |
 | **Completed Unread Inbox** | Fades away after ~5 seconds | **Persistent Unread Inbox (`Unread`)** — stays until you click to jump straight back to the conversation (auto-marks read!) or dismiss |
-| **Exact Conversation Jump** | Only brings the app to front | **Direct thread navigation** — native `codex://threads/<id>` deep links for Codex + official `Cmd+K` search palette jump for Antigravity (clipboard-safe) |
+| **Exact Conversation Jump** | Only brings the app to front | **Direct thread navigation** — native `codex://threads/<id>` & `t3code://threads/<env>/<id>` deep links + official `Cmd+K` search palette jump for Antigravity (clipboard-safe) |
 | **Dual Form Factor** | Notch-only or window-only | **Dynamic Notch Island ↔ 1-Click Floating Desktop Board** — collapsed notch ears show 6 expressive Lumi Ember micro-states, stacked native app icons, live solo `MM:SS` timer / `? Reply` badge, and auto-narrow when idle; auto-adapts to non-notch displays |
-| **Subagent & Noise Hygiene** | Subagents & CLI jobs flood the list | Rolls active subagents into **`+N` badges** on the parent dialog; separates standalone chats from headless CLI runs; 4.5s settle debounce prevents premature finish popups |
-| **Zero-Config + Hooks** | Manual JSON editing required | **Out-of-the-box local watch** for Antigravity, Codex (Desktop & CLI), and Claude Code + **1-click Hook Installer** (with automatic backup) for all 6 agents |
-| **Approval / Needs-Input Alerts** | Silent when agent blocks on a prompt | **Instant `Needs Input` priority section + `?` mascot alert** when Claude/Codex/Antigravity pauses for approval or a question |
+| **Subagent & Noise Hygiene** | Subagents & CLI jobs flood the list | Rolls active subagents into **`+N` badges** on the parent dialog; separates standalone chats from headless CLI runs; deduplicates underlying Codex/Claude/Antigravity runs launched inside T3 Code; 4.5s settle debounce prevents premature finish popups |
+| **Zero-Config + Hooks** | Manual JSON editing required | **Out-of-the-box local watch** for Antigravity, Codex (Desktop & CLI), Claude Code, and **T3 Code** + **1-click Hook Installer** (with automatic backup) across 7 AI coding tools |
+| **Approval / Needs-Input Alerts** | Silent when agent blocks on a prompt | **Instant `Needs Input` priority section + `?` mascot alert** when Claude, Codex, Antigravity, or T3 Code pauses for approval or a question |
 | **Bilingual & Controls** | Single-language, mouse-only | **Live English / 中文 hot-switch**, global toggle hotkey (`⌥L` + `Esc`), fullscreen auto-peek guard, **Morning Oat Light** floating theme, 1-click DND mute, and manual update check |
 | **Original Vector Mascot** | Static icon or 60 fps CPU burn | **Lumi Ember** — warm Californian editorial luminous bean drawn in pure SwiftUI `Canvas` with goofy asymmetric eyes, `{ }` coding squint, `?` approval cue, joyful confetti jumps, slumped `Zzz` sleep & dizzy easter egg — **adaptive FPS (< 2% idle CPU)** |
 
@@ -92,7 +92,7 @@ Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF blo
 | **Google Antigravity** | Yes | Yes (`~/.gemini/config/hooks.json`) | Yes | Yes | `Cmd+K` Auto-Locate |
 | **OpenAI Codex** (Desktop & CLI) | Yes | Yes (`~/.codex/hooks.json`) | Yes | Yes | Native `codex://` |
 | **Claude Code** | Yes | Yes (`~/.claude/settings.json`) | Yes | Yes | App Focus |
-| **T3 Code** | Yes (`~/.t3/userdata/statev2.sqlite`) | Not needed (auto DB watch) | Yes | Yes | App & Window Focus |
+| **T3 Code** | Yes (`~/.t3/userdata/statev2.sqlite`) | Not needed (auto DB watch & dedupe) | Yes | Yes | Native `t3code://` |
 | **Cursor** | — | Yes (`~/.cursor/hooks.json`) | Hook prompt | — | App Focus |
 | **Gemini CLI** | — | Yes (`~/.gemini/settings.json`) | Hook prompt | — | Terminal Focus |
 | **OpenCode** | — | Yes (`~/.config/opencode/plugins/lumi.js`) | Hook prompt | — | Terminal Focus |
@@ -149,13 +149,13 @@ open -a /Applications/Lumi.app
 - **Quick Menu, DND & Language**: Right-click the warm-orange menu bar Lumi Ember icon to switch modes, enable **Do Not Disturb (30 min / 1 hr)**, hot-switch **English / 简体中文** without restarting, mark all read, open Settings, or **Quit Lumi** (`⌘Q`).
 
 ### 2. Connecting AI Coding Agents
-1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, and **Claude Code** are tracked automatically with zero setup.
+1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, and **T3 Code** are tracked automatically with zero setup (including smart deduplication when T3 Code runs Codex, Claude, or Antigravity underneath).
 2. Open **Settings (⚙️) → AI Agents** to enable 1-click Hooks:
    - Installs a fast, atomic Python relay to `~/.lumi/lumi-hook.py` (< 10 ms, never blocks your agent).
    - Automatically backs up existing hook files (`*.bak-<timestamp>`) before writing and removes only Lumi's entry on uninstall.
 
-### 3. Enabling Click-to-Jump for Antigravity
-- **Codex** supports native `codex://threads/<id>` deep links out of the box (no permissions needed).
+### 3. Enabling Click-to-Jump
+- **Codex** (`codex://threads/<id>`) and **T3 Code** (`t3code://threads/<environmentId>/<threadId>`) support native deep links out of the box — clicking any card or macOS notification jumps straight to the exact thread with zero permissions needed.
 - **Antigravity** does not yet expose a conversation-ID URL scheme, so Lumi navigates cleanly via Antigravity's official **`⌘K` Search Conversations** palette (preserving & restoring your clipboard automatically).
 - To enable this: open **Settings → AI Agents → Grant Permission**, and allow **Lumi** in **System Settings → Privacy & Security → Accessibility**.
 - *Tip:* If you rebuild Lumi locally with an ad-hoc signature, remove the old Lumi entry (`-`) and re-add `/Applications/Lumi.app` (`+`) once. Building with a Developer ID certificate keeps Accessibility authorization intact across rebuilds automatically.
@@ -171,7 +171,7 @@ For persistent completion banners that stay visible until you act on them:
 ## Privacy & Architecture
 
 - **100% Native Swift / SwiftUI / AppKit / SQLite3** — zero Electron, zero Node.js runtime, zero cloud calls, zero telemetry.
-- **WAL-Safe Read-Only DB Access** — opens Antigravity (`conversation_summaries.db`) and Codex (`state_5.sqlite`) with `PRAGMA query_only = ON` so Lumi **never writes or blocks checkpoints**, even when `-wal` / `-shm` sidecar files are absent between writes.
+- **WAL-Safe Read-Only DB Access** — opens Antigravity (`conversation_summaries.db`), Codex (`state_5.sqlite`), and T3 Code (`statev2.sqlite`) with `PRAGMA query_only = ON` so Lumi **never writes or blocks checkpoints**, even when `-wal` / `-shm` sidecar files are absent between writes.
 - **Long-Turn Safe Rollout Parser** — reads bounded 256 KB tail slices with `(fileSize, mtime)` caching, safely tracking 700 MB+ multi-hour Codex sessions with near-zero I/O.
 - **Transient-Error Resilience & Settle Debounce** — preserves last known state across transient DB locks and applies a 4.5-second completion settle window so multi-step subagent handoffs never trigger false completion alerts.
 
@@ -180,6 +180,7 @@ flowchart LR
     AGY["Antigravity\nSQLite WAL + Hooks"] --> Store
     Codex["Codex Desktop & CLI\nSQLite + 256KB Tail"] --> Store
     Claude["Claude Code\nTranscripts + Hooks"] --> Store
+    T3["T3 Code\nstatev2.sqlite WAL + Dedupe"] --> Store
     Extra["Cursor / Gemini / OpenCode\n~/.lumi/live/*.json"] --> Store
 
     Store["MonitorStore\nState Machine · 4.5s Debounce\nPersistent Read Inbox"] --> Notch["Dynamic Notch Island\nNotchOverlayPanel"]
@@ -191,7 +192,7 @@ flowchart LR
 ```text
 Sources/Lumi/
 ├── App/         # AppDelegate, Menu Bar status item, NotchWindowController (hardware notch geometry)
-├── Core/        # Antigravity, Codex, Claude, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
+├── Core/        # Antigravity, Codex, Claude, T3Code, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
 ├── Mascot/      # LumiMascotView (Lumi Ember SwiftUI Canvas mascot with adaptive FPS & cursor gaze)
 ├── Models/      # AgentModels, smart ProjectNameHelper, ToolActionFormatter
 └── UI/          # NotchIslandView, FloatingBoardView, StudioBentoBoardView, SessionCardView, SettingsView
@@ -202,7 +203,7 @@ Sources/Lumi/
 ## FAQ & Troubleshooting
 
 <details>
-<summary><strong>Does Lumi modify my Antigravity or Codex databases?</strong></summary>
+<summary><strong>Does Lumi modify my Antigravity, Codex, or T3 Code databases?</strong></summary>
 
 Never. `SQLiteReader` immediately sets `PRAGMA query_only = ON;` on every connection (verified by unit tests in `Tests/LumiTests/LumiCoreTests.swift`), ensuring zero writes and zero WAL checkpoint contention while remaining compatible with WAL databases even when `-wal` / `-shm` files are not currently on disk.
 </details>
@@ -230,12 +231,12 @@ macOS ties Accessibility TCC grants to the app's code signature. If you previous
 ## Roadmap & Contributing
 
 - [x] MacBook hardware notch fusion + detachable Floating Board
-- [x] Zero-config local scanners for Antigravity, Codex (Desktop & CLI), and Claude Code
-- [x] 1-click Hook installer for 6 AI coding agents
-- [x] Exact conversation jump (`codex://` + Antigravity `⌘K`)
+- [x] Zero-config local scanners for Antigravity, Codex (Desktop & CLI), Claude Code, and T3 Code (with underlying session dedupe)
+- [x] 1-click Hook installer & 7-agent support
+- [x] Exact conversation jump (`codex://` + `t3code://` deep links + Antigravity `⌘K`)
 - [x] Homebrew Cask formula (`brew tap kf953741/lumi https://github.com/kf953741/lumi && brew install --cask kf953741/lumi/lumi`)
-- [ ] Full English / Chinese UI localization toggle
-- [ ] Optional per-agent notification sound customization & keyboard shortcut to toggle board
+- [x] Live English / Chinese UI localization toggle & global board hotkey (`⌥L` / `Esc`)
+- [ ] Optional per-agent notification sound customization
 
 Contributions, bug reports, and feature ideas are warmly welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 

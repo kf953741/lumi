@@ -6,7 +6,7 @@
 
 **驻留在 MacBook 刘海灵动岛与桌面的 AI 编程 Agent 可视化盯盘中心。**
 
-*支持 Antigravity · Codex（桌面版与 CLI）· Claude Code · Cursor · Gemini CLI · OpenCode*
+*支持 Antigravity · Codex（桌面版与 CLI）· Claude Code · T3 Code · Cursor · Gemini CLI · OpenCode*
 
 [English](README.md) · **简体中文**
 
@@ -26,7 +26,7 @@
 
 ## 为什么做 Lumi？
 
-同时开着 5～10 个 **Antigravity**、**Codex**、**Claude Code** 对话窗口并行写代码时，市面上常见的刘海/监控工具往往有三个让人抓狂的痛点：
+同时开着 5～10 个 **Antigravity**、**Codex**、**Claude Code**、**T3 Code** 对话窗口并行写代码时，市面上常见的刘海/监控工具往往有三个让人抓狂的痛点：
 
 1. **所有对话挤成一个模糊胶囊**——同一个仓库开多个窗口全都叫 `lib` 或 `src`，根本分不清到底哪个对话在干活；
 2. **完成提醒 5 秒就没了**——切换一下桌面或倒杯水回来，完全不知道哪个窗口刚跑完；
@@ -38,11 +38,11 @@
 | :--- | :--- | :--- |
 | **多对话清晰度** | 一个客户端共用一个胶囊，看不到对话标题 | **每个独立对话一行清晰卡片**：显示侧边栏真实标题、智能项目名（`上级目录/src`）、实时工具动作与已用时长 |
 | **已完成待查看箱** | 闪烁约 5 秒后自动清空 | **持久「待查看」收件箱**：只保留独立桌面对话，**单击卡片直接跳回对话并自动已读移出**，错过也不丢 |
-| **精准直达对话** | 只切回 App 主窗口 | **直达具体会话**：Codex 使用原生 `codex://threads/<id>` 深链，Antigravity 通过官方 `⌘K` 对话搜索精准切入（不破坏剪贴板） |
+| **精准直达对话** | 只切回 App 主窗口 | **直达具体会话**：Codex（`codex://threads/<id>`）与 **T3 Code**（`t3code://threads/<env>/<id>`）支持原生深链秒切，Antigravity 通过官方 `⌘K` 对话搜索精准切入（不破坏剪贴板） |
 | **双形态无缝切换** | 仅刘海或仅小窗 | **刘海灵动岛 ↔ 一键桌面悬浮看板**：收起态即呈现 6 种高对比度小豆豆微表情、叠放原生应用小图标、单任务实时 `MM:SS` 计时器 / `? 确认` 提示并在空闲时自动缩窄；外接非刘海屏自动切换悬浮胶囊 |
-| **子 Agent 折叠与防误报** | 子 Agent、CLI 批处理疯狂刷屏 | 自动把活跃子 Agent 折叠成父对话上的 **`+N` 徽标**，默认隐藏后台 CLI 批处理任务，内置 4.5 秒收尾防抖杜绝中途误报 |
-| **开箱即用 + 一键 Hook** | 必须手改多份配置文件 | **Antigravity / Codex（桌面版与 CLI）/ Claude Code 零配置自动发现** + 设置页一键接入/卸载 6 家 Hook（自动备份原配置） |
-| **等待审批 / 卡住强提醒** | 后台弹出权限确认完全无感知 | **即时捕捉 `等待审批或回复` 状态**：置顶亮标 + Lumi Ember 焦急 `?` 提示，绝不让你在后台白等 20 分钟 |
+| **子 Agent 折叠与防误报** | 子 Agent、CLI 批处理疯狂刷屏 | 自动把活跃子 Agent 折叠成父对话上的 **`+N` 徽标**，自动去重 T3 Code 托管的底层 Codex/Claude/Antigravity 会话，默认隐藏后台 CLI 批处理，内置 4.5 秒收尾防抖杜绝中途误报 |
+| **开箱即用 + 一键 Hook** | 必须手改多份配置文件 | **Antigravity / Codex（桌面版与 CLI）/ Claude Code / T3 Code 零配置自动发现** + 设置页一键接入/卸载 Hook（自动备份原配置），原生覆盖 7 大 AI 工具 |
+| **等待审批 / 卡住强提醒** | 后台弹出权限确认完全无感知 | **即时捕捉 `等待审批或回复` 状态**：Claude / Codex / Antigravity / T3 Code 任一端卡在审批或提问时置顶亮标 + Lumi Ember 焦急 `?` 提示，绝不让你在后台白等 20 分钟 |
 | **中英双语与极客交互** | 单语硬编码、纯鼠标操作 | **简体中文 / English 实时热切换**（跟随系统默认）、全局快捷键 **`⌥L` + `Esc`**、全屏防打扰、悬浮窗**晨光燕麦浅色**、一键勿扰静音与手动检查更新 |
 | **原创动态矢量萌宠** | 静态图标或 60fps 常驻费电 | **原创暖橘萌宠 Lumi Ember**：不对称戏精大眼、干活死死眯眼盯 `{ }`、等审批冒 `?` 招手、完工咧嘴憨笑弹起抛几何彩纸、空闲歪倒摊平半闭眼冒 `Zzz`、连戳 4 下转晕，**自适应帧率（空闲 CPU < 2%）** |
 
@@ -92,7 +92,7 @@
 | **Google Antigravity** | 支持 | 支持（`~/.gemini/config/hooks.json`） | 支持 | 支持 | `⌘K` 精准切入对话 |
 | **OpenAI Codex**（桌面版 & CLI） | 支持 | 支持（`~/.codex/hooks.json`） | 支持 | 支持 | 原生 `codex://` 深链 |
 | **Claude Code** | 支持 | 支持（`~/.claude/settings.json`） | 支持 | 支持 | 切回应用窗口 |
-| **T3 Code** | 支持（`~/.t3/userdata/statev2.sqlite`） | 免配置自动监听 | 支持 | 支持 | 切回应用与窗口 |
+| **T3 Code** | 支持（`~/.t3/userdata/statev2.sqlite`） | 免配置自动监听与底层去重 | 支持 | 支持 | 原生 `t3code://` 深链 |
 | **Cursor** | — | 支持（`~/.cursor/hooks.json`） | Hook 提示词 | — | 切回应用窗口 |
 | **Gemini CLI** | — | 支持（`~/.gemini/settings.json`） | Hook 提示词 | — | 切回终端 |
 | **OpenCode** | — | 支持（`~/.config/opencode/plugins/lumi.js`） | Hook 提示词 | — | 切回终端 |
@@ -149,13 +149,13 @@ open -a /Applications/Lumi.app
 - **右键菜单、勿扰与双语切换**：右键点击顶部菜单栏 Lumi 图标可快速切换形态、开启**勿扰静音（30 分钟 / 1 小时）**、**热切换简体中文 / English**、全部已读、打开设置或退出（`⌘Q`）。
 
 ### 2. 接入你的 AI 编程工具
-1. 启动 Lumi 后，**Antigravity**、**Codex（含桌面版）**、**Claude Code** 会自动开始追踪，无需手动配置。
+1. 启动 Lumi 后，**Antigravity**、**Codex（含桌面版）**、**Claude Code** 与 **T3 Code** 会自动开始追踪，无需手动配置（且会自动去重 T3 Code 内部托管运行的 Codex / Claude / Antigravity 会话，避免重复弹窗）。
 2. 点击齿轮打开 **设置 → AI 工具接入**，可按需一键安装各工具的 Hook：
    - 会在 `~/.lumi/lumi-hook.py` 部署极轻量的原子写入中继脚本（耗时 < 10ms，绝不阻塞宿主 Agent）。
    - 修改任意配置文件前都会自动生成 `*.bak-<时间戳>` 备份；卸载时仅精准移除 Lumi 条目，完全保留你原有的其他 Hook。
 
-### 3. 开启 Antigravity 点击精准跳对话
-- **Codex** 原生支持 `codex://threads/<id>` 深链，点击卡片即可秒切具体对话，无需任何系统权限。
+### 3. 点击精准直达对应对话
+- **Codex**（`codex://threads/<id>`）与 **T3 Code**（`t3code://threads/<environmentId>/<threadId>`）均原生支持深链，点击卡片或系统通知即可秒切到具体对话，无需任何系统权限。
 - **Antigravity** 暂未开放按对话 ID 跳转的 URL Scheme，因此 Lumi 通过其官方 **`⌘K` 对话搜索面板** 自动定位目标对话（并自动保存和还原你的原剪贴板内容）。
 - 开启步骤：在 **设置 → AI 工具接入** 点击 **「前往授权」**，在 **系统设置 → 隐私与安全性 → 辅助功能** 中开启 **Lumi**。
 - *小贴士*：若你之前用临时 ad-hoc 签名编译过、后来重新编译导致开关开着却提示未就绪，只需在辅助功能列表中选中旧的 `Lumi` 点左下角 **`-`** 删除，再点 **`+`** 重新添加 `/Applications/Lumi.app` 即可。本机装有 Developer ID 证书时，`./scripts/build_app.sh` 会自动签名，后续更新永久不掉权限。
@@ -171,7 +171,7 @@ open -a /Applications/Lumi.app
 ## 隐私安全与架构设计
 
 - **100% 纯原生 Swift / SwiftUI / AppKit / SQLite3**——无 Electron、无 Node 运行时、零网络请求、零云端上传。
-- **WAL 安全只读查询**——读取 Antigravity（`conversation_summaries.db`）和 Codex（`state_5.sqlite`）时强制开启 `PRAGMA query_only = ON`，**绝不写入数据、不争抢写锁**，且彻底兼容 WAL 模式下 `-wal` / `-shm` 文件被清理后仍稳定读取。
+- **WAL 安全只读查询**——读取 Antigravity（`conversation_summaries.db`）、Codex（`state_5.sqlite`）与 T3 Code（`statev2.sqlite`）时强制开启 `PRAGMA query_only = ON`，**绝不写入数据、不争抢写锁**，且彻底兼容 WAL 模式下 `-wal` / `-shm` 文件被清理后仍稳定读取。
 - **超长会话尾部解析**——对 700MB+ 的 Codex 超长运行日志仅做 256KB 尾部解析与 `(fileSize, mtime)` 增量缓存，I/O 极低且不会因日志滚动误判为已完成。
 - **瞬时容错与 4.5 秒收尾防抖**——遇到瞬时数据库锁自动保留上次有效会话不闪烁；任务从运行转为空闲需稳定持续 4.5 秒才触发完工提醒，避免多步交接与子 Agent 唤醒误弹窗。
 
@@ -180,6 +180,7 @@ flowchart LR
     AGY["Antigravity\nSQLite WAL + Hooks"] --> Store
     Codex["Codex 桌面版 & CLI\nSQLite + 256KB 尾解析"] --> Store
     Claude["Claude Code\n本地会话 + Hooks"] --> Store
+    T3["T3 Code\nstatev2.sqlite WAL + 底层去重"] --> Store
     Extra["Cursor / Gemini / OpenCode\n~/.lumi/live/*.json"] --> Store
 
     Store["MonitorStore\n状态机 · 4.5s 防抖\n持久未读收件箱"] --> Notch["刘海灵动岛\nNotchOverlayPanel"]
@@ -191,7 +192,7 @@ flowchart LR
 ```text
 Sources/Lumi/
 ├── App/         # AppDelegate、菜单栏状态项、NotchWindowController（物理刘海几何贴合）
-├── Core/        # Antigravity / Codex / Claude / 扩展扫描器、WAL 安全 SQLiteReader、HookInstaller、MonitorStore
+├── Core/        # Antigravity / Codex / Claude / T3Code / 扩展扫描器、WAL 安全 SQLiteReader、HookInstaller、MonitorStore
 ├── Mascot/      # LumiMascotView（Lumi Ember 原创自适应帧率 SwiftUI Canvas 暖橘萌宠）
 ├── Models/      # AgentModels、智能项目名消歧 ProjectNameHelper、工具动作格式化
 └── UI/          # NotchIslandView、FloatingBoardView、StudioBentoBoardView、SessionCardView、SettingsView
@@ -202,7 +203,7 @@ Sources/Lumi/
 ## 常见问题（FAQ）
 
 <details>
-<summary><strong>Lumi 会修改或锁定我的 Antigravity / Codex 数据库吗？</strong></summary>
+<summary><strong>Lumi 会修改或锁定我的 Antigravity / Codex / T3 Code 数据库吗？</strong></summary>
 
 不会。`SQLiteReader` 建立连接后立即执行 `PRAGMA query_only = ON;`（已在 `Tests/LumiTests/LumiCoreTests.swift` 中通过单元测试验证写操作被严格拒绝），既保证了零写入、不阻塞宿主 checkpoint，又解决了 WAL 数据库在 `-wal`/`-shm` 缺失时普通只读模式报错的问题。
 </details>
@@ -230,12 +231,12 @@ macOS 会将辅助功能权限绑定到应用的签名标识。如果之前运�
 ## 路线图与参与贡献
 
 - [x] MacBook 物理刘海无缝贴合 + 一键弹出桌面悬浮看板
-- [x] Antigravity、Codex（桌面版 & CLI）、Claude Code 零配置自动监测
-- [x] 6 大 AI 编程工具一键 Hook 安装与安全备份
-- [x] 精准对话跳转（Codex 原生深链 + Antigravity 官方 `⌘K`）
+- [x] Antigravity、Codex（桌面版 & CLI）、Claude Code、T3 Code 零配置自动监测与底层去重
+- [x] 7 大 AI 编程工具原生支持与一键 Hook 安全备份
+- [x] 精准对话跳转（Codex `codex://` + T3 Code `t3code://` 原生深链 + Antigravity 官方 `⌘K`）
 - [x] Homebrew Cask 一键安装（`brew tap kf953741/lumi https://github.com/kf953741/lumi && brew install --cask kf953741/lumi/lumi`）
-- [ ] 界面中/英文语言一键切换
-- [ ] 分平台自定义提示音 & 全局快捷键呼出面板
+- [x] 界面中/英文实时热切换 & 全局快捷键呼出面板（`⌥L` / `Esc`）
+- [ ] 分平台自定义提示音
 
 欢迎任何形式的 Issue、PR 与建议！详情请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
