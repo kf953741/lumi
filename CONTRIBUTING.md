@@ -24,7 +24,7 @@ Sources/Lumi/
 ├── Core/        # Antigravity, Codex, Claude, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
 ├── Mascot/      # LumiMascotView (Lumi Ember lineless Canvas bean with adaptive FPS & eye tracking)
 ├── Models/      # AgentModels, ProjectNameHelper, ToolActionFormatter
-└── UI/          # NotchIslandView, FloatingBoardView, StudioBentoBoardView, SessionCardView, SettingsView
+└── UI/          # NotchIslandView, FloatingBoardView, StudioBentoBoardView, SessionCardView, NativeAgentIconView, SettingsView
 ```
 
 ## Engineering Guidelines

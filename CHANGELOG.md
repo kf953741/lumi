@@ -2,6 +2,13 @@
 
 All notable changes to **Lumi** will be documented in this file.
 
+## [1.2.0] - 2026-11-22
+
+### Changed
+- **Warm Charcoal Hearth UI Overhaul**: Replaced cold blue-slate obsidian glass, outer-space purple mascot stage, and neon-green accents with a cohesive warm-charcoal palette (`LumiPalette`), mood-reactive Warm Hearth lighting with soft floor reflections, champagne glass rims, and Ember-gold primary accents.
+- **Native macOS App Icons & Apple Knockout Corner Badges**: Eliminated colored text pill badges and rainbow status dots in `SessionCardView` and `SettingsView`. Added `NativeAgentIconView` (`AgentIconCache`) to load real local `.app` icons at runtime via `NSWorkspace` / `NSRunningApplication` (flattened cleanly to 8-bit sRGB) with 6 hand-crafted SwiftUI `Canvas` macOS squircle fallbacks for CLI-only workflows, paired with low-CPU animated knockout corner spinners and Ember unread checkmarks.
+- **Refreshed Visual Showcase**: Re-rendered all README screenshots, GitHub Social Preview, and the 10-second interactive demo GIF/MP4 to match the v1.2.0 Warm Charcoal Hearth & Native App Icon UI.
+
 ## [1.1.0] - 2026-11-22
 
 ### Changed

@@ -11,13 +11,13 @@ struct FloatingBoardView: View {
 
     var body: some View {
         ZStack {
-            // Smoked obsidian frosted glass (subtle ambient blur + crisp high-contrast readability)
+            // Warm Charcoal frosted glass (subtle ambient blur + crisp warm-white readability)
             ZStack {
                 LiquidGlassBackdrop(material: .hudWindow)
                 LinearGradient(
                     colors: [
-                        Color(red: 0.052, green: 0.055, blue: 0.072).opacity(0.84),
-                        Color(red: 0.036, green: 0.039, blue: 0.052).opacity(0.88)
+                        LumiPalette.shellTop.opacity(0.90),
+                        LumiPalette.shellBottom.opacity(0.94)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -29,10 +29,10 @@ struct FloatingBoardView: View {
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.22),
-                                Color.white.opacity(0.08),
-                                Color.white.opacity(0.04),
-                                Color.white.opacity(0.12)
+                                LumiPalette.champagneRim.opacity(0.20),
+                                LumiPalette.champagneRim.opacity(0.07),
+                                Color.white.opacity(0.03),
+                                LumiPalette.emberGold.opacity(0.11)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing

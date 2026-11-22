@@ -115,8 +115,8 @@ struct NotchIslandView: View {
                         stops: [
                             .init(color: Color.black, location: 0.0),
                             .init(color: Color.black, location: 0.08),
-                            .init(color: Color(red: 0.04, green: 0.043, blue: 0.058).opacity(0.86), location: 0.20),
-                            .init(color: Color(red: 0.035, green: 0.038, blue: 0.052).opacity(0.88), location: 1.0)
+                            .init(color: LumiPalette.shellTop.opacity(0.90), location: 0.20),
+                            .init(color: LumiPalette.shellBottom.opacity(0.92), location: 1.0)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -129,13 +129,13 @@ struct NotchIslandView: View {
                             stops: [
                                 .init(color: Color.clear, location: 0.0),
                                 .init(color: Color.clear, location: 0.10),
-                                .init(color: Color.white.opacity(0.16), location: 0.45),
-                                .init(color: Color.white.opacity(0.20), location: 1.0)
+                                .init(color: LumiPalette.champagneRim.opacity(0.16), location: 0.45),
+                                .init(color: LumiPalette.emberGold.opacity(0.15), location: 1.0)
                             ],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
-                        lineWidth: 1.2
+                        lineWidth: 1.1
                     )
                     .clipShape(shape)
                 )
@@ -198,13 +198,13 @@ struct NotchIslandView: View {
         return ZStack(alignment: .top) {
             ZStack {
                 LiquidGlassBackdrop(material: .hudWindow)
-                Color(red: 0.04, green: 0.043, blue: 0.058).opacity(isExpanded ? 0.85 : 0.82)
+                LumiPalette.shellTop.opacity(isExpanded ? 0.90 : 0.86)
             }
             .clipShape(shape)
             .overlay(
                 shape.strokeBorder(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.22), Color.white.opacity(0.06), Color.white.opacity(0.14)],
+                        colors: [LumiPalette.champagneRim.opacity(0.20), Color.white.opacity(0.05), LumiPalette.emberGold.opacity(0.12)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
@@ -260,25 +260,23 @@ struct NotchIslandView: View {
     private var compactStatusBadge: some View {
         HStack(spacing: 5) {
             if store.totalRunningCount > 0 {
-                HStack(spacing: 2.5) {
-                    Circle()
-                        .fill(Color(red: 0.28, green: 0.90, blue: 0.62))
-                        .frame(width: 6, height: 6)
+                HStack(spacing: 3) {
+                    TelemetryPulseBars(active: true, color: LumiPalette.runningIvory)
                     Text("\(store.totalRunningCount)")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundColor(Color(red: 0.42, green: 0.96, blue: 0.70))
+                        .foregroundColor(LumiPalette.warmPrimary)
                 }
             }
             if store.totalUnreadCount > 0 {
                 HStack(spacing: 2) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 9.5))
-                        .foregroundColor(Color(red: 1.0, green: 0.78, blue: 0.28))
+                        .foregroundColor(LumiPalette.emberOrange)
                     Text("\(store.totalUnreadCount)")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundColor(Color(red: 1.0, green: 0.84, blue: 0.40))
+                        .foregroundColor(LumiPalette.emberGold)
                 }
             }
             if store.totalRunningCount == 0 && store.totalUnreadCount == 0 {

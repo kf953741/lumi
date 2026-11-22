@@ -58,7 +58,7 @@
 
 ### 1. 刘海灵动岛 ↔ 桌面悬浮看板，双形态一键切换
 
-平时安静贴合在 MacBook 摄像头刘海两侧，鼠标轻悬即可丝滑展开高对比度烟熏黑曜石 **Studio Bento** 面板；接了外接显示器或想把看板常驻在屏幕一角时，点一下 **「桌面模式」** 就能弹出跨桌面 Space 跟随的半透明悬浮窗。
+平时安静贴合在 MacBook 摄像头刘海两侧，鼠标轻悬即可丝滑展开高对比度**暖炭壁炉（Warm Charcoal Hearth）** Studio Bento 面板——左侧自动呈现本机原生 macOS 应用图标与经典右下角缺口状态徽章，零彩色标签噪点；接了外接显示器或想把看板常驻在屏幕一角时，点一下 **「桌面模式」** 就能弹出跨桌面 Space 跟随的半透明悬浮窗。
 
 <div align="center">
   <img src="docs/assets/dual-modes.png" width="100%" alt="Lumi 刘海灵动岛与桌面悬浮看板双形态展示" />
@@ -132,7 +132,7 @@ open -a /Applications/Lumi.app
 
 > **自行打包发布 `.dmg`（含 SHA-256 校验值）：**
 > ```bash
-> ./scripts/package_dmg.sh 1.1.0
+> ./scripts/package_dmg.sh 1.2.0
 > ```
 
 ---

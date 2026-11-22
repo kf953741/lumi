@@ -58,7 +58,7 @@ Hover the MacBook notch to expand, watch Lumi Ember squint intensely at `{ }`, l
 
 ### 1. Dynamic Notch Island ↔ Floating Desktop Board
 
-Hover over your MacBook's hardware notch to unfold a high-contrast smoked obsidian **Studio Bento** control center. Working on an external display or want a persistent side monitor? Click **Desktop Mode** to detach into a translucent always-on-top floating board that follows you across macOS Spaces.
+Hover over your MacBook's hardware notch to unfold a high-contrast **Warm Charcoal Hearth** Studio Bento control center with native macOS app icons and clean Apple knockout corner status badges. Working on an external display or want a persistent side monitor? Click **Desktop Mode** to detach into a translucent always-on-top floating board that follows you across macOS Spaces.
 
 <div align="center">
   <img src="docs/assets/dual-modes.png" width="100%" alt="Lumi Dynamic Notch Island and Detachable Floating Desktop Board" />
@@ -132,7 +132,7 @@ open -a /Applications/Lumi.app
 
 > **Note:** To package your own distributable `.dmg` with SHA-256 checksum:
 > ```bash
-> ./scripts/package_dmg.sh 1.1.0
+> ./scripts/package_dmg.sh 1.2.0
 > ```
 
 ---

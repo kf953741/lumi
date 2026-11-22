@@ -30,7 +30,7 @@ struct SettingsView: View {
             Divider()
 
             HStack {
-                Text("Lumi v1.1.0 · MIT License")
+                Text("Lumi v1.2.0 · MIT License")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -84,7 +84,7 @@ struct SettingsView: View {
 
             Section("开源项目信息") {
                 HStack {
-                    Text("Lumi v1.1.0 · MIT License")
+                    Text("Lumi v1.2.0 · MIT License")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -102,14 +102,29 @@ struct SettingsView: View {
 
     private var mascotTab: some View {
         VStack(spacing: 18) {
-            // Interactive Hero Preview
+            // Interactive Warm Hearth Preview
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.black.opacity(0.88))
+                    .fill(
+                        LinearGradient(
+                            colors: [LumiPalette.stageTop, LumiPalette.stageBottom],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .frame(height: 150)
                     .overlay(
+                        RadialGradient(
+                            colors: [store.mascotTheme.bodyTop.opacity(0.24), Color.clear],
+                            center: UnitPoint(x: 0.22, y: 0.50),
+                            startRadius: 8,
+                            endRadius: 120
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    )
+                    .overlay(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .strokeBorder(store.mascotTheme.bodyTop.opacity(0.35), lineWidth: 1)
+                            .strokeBorder(store.mascotTheme.bodyTop.opacity(0.32), lineWidth: 1)
                     )
 
                 HStack(spacing: 22) {
@@ -264,11 +279,8 @@ struct SettingsView: View {
                     ForEach(AgentKind.allCases) { kind in
                         let installed = store.hookStatus[kind] ?? false
                         HStack(spacing: 12) {
-                            Text(kind.shortLabel)
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .foregroundColor(kind.accentColor)
-                                .frame(width: 66, height: 28)
-                                .background(RoundedRectangle(cornerRadius: 7).fill(kind.accentColor.opacity(0.16)))
+                            NativeAgentIconView(kind: kind, visualSize: 30)
+                                .frame(width: 34, height: 34)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {

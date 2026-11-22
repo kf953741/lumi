@@ -44,12 +44,12 @@ struct StudioBentoBoardView: View {
     @State private var activeTab: BentoListTab = .all
     @State private var showRecent = false
 
-    // Rich tactile smoked Bento glass fills (subtle translucency + WCAG AAA text contrast)
+    // Rich tactile Warm Charcoal Bento glass fills (subtle translucency + WCAG AAA warm-white text contrast)
     private var glassCardFill: LinearGradient {
         LinearGradient(
             colors: [
-                Color(red: 0.125, green: 0.130, blue: 0.165).opacity(0.84),
-                Color(red: 0.095, green: 0.100, blue: 0.130).opacity(0.88)
+                LumiPalette.cardTop.opacity(0.88),
+                LumiPalette.cardBottom.opacity(0.92)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -58,7 +58,7 @@ struct StudioBentoBoardView: View {
 
     var body: some View {
         VStack(spacing: 9) {
-            // MARK: - Top Bento Split (Liquid Glass Mascot Stage + Telemetry Tiles)
+            // MARK: - Top Bento Split (Warm Hearth Mascot Stage + Telemetry Tiles)
             HStack(spacing: 9) {
                 mascotStageModule
                     .frame(width: 146, height: 118)
@@ -68,7 +68,8 @@ struct StudioBentoBoardView: View {
                         telemetryTile(
                             number: store.totalRunningCount,
                             label: "执行中",
-                            accent: Color(red: 0.28, green: 0.90, blue: 0.62),
+                            accent: LumiPalette.runningIvory,
+                            isRunningTile: true,
                             isSelected: activeTab == .running
                         ) {
                             withAnimation(.easeInOut(duration: 0.16)) {
@@ -79,7 +80,8 @@ struct StudioBentoBoardView: View {
                         telemetryTile(
                             number: store.totalUnreadCount,
                             label: "待查看",
-                            accent: Color(red: 1.0, green: 0.78, blue: 0.30),
+                            accent: LumiPalette.emberGold,
+                            isRunningTile: false,
                             isSelected: activeTab == .unread
                         ) {
                             withAnimation(.easeInOut(duration: 0.16)) {
@@ -94,7 +96,7 @@ struct StudioBentoBoardView: View {
                 }
             }
 
-            // MARK: - Bottom Unified Liquid Glass Task Card
+            // MARK: - Bottom Unified Warm Charcoal Task Card
             taskListModule
         }
         .padding(.horizontal, 12)
@@ -102,7 +104,15 @@ struct StudioBentoBoardView: View {
         .padding(.top, inNotch ? 2 : 12)
     }
 
-    // MARK: - Left Liquid Glass Mascot Stage
+    // MARK: - Left Warm Hearth Mascot Stage
+
+    private var stageGlowMultiplier: Double {
+        switch store.mascotMood {
+        case .celebrating: return 1.38
+        case .sleeping:    return 0.50
+        default:           return 1.0
+        }
+    }
 
     private var mascotStageModule: some View {
         ZStack {
@@ -110,8 +120,8 @@ struct StudioBentoBoardView: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(red: 0.15, green: 0.135, blue: 0.22).opacity(0.90),
-                            Color(red: 0.095, green: 0.098, blue: 0.135).opacity(0.92)
+                            LumiPalette.stageTop.opacity(0.94),
+                            LumiPalette.stageBottom.opacity(0.96)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -119,15 +129,50 @@ struct StudioBentoBoardView: View {
                 )
                 .overlay(
                     RadialGradient(
-                        colors: [store.mascotTheme.eyeGlow.opacity(0.20), Color.clear],
-                        center: .center,
+                        colors: [
+                            store.mascotTheme.bodyTop.opacity(0.24 * stageGlowMultiplier),
+                            store.mascotTheme.bodyBottom.opacity(0.08 * stageGlowMultiplier),
+                            Color.clear
+                        ],
+                        center: UnitPoint(x: 0.5, y: 0.48),
                         startRadius: 4,
-                        endRadius: 68
+                        endRadius: 72
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                 )
-                .overlay(stageStars)
-                .overlay(liquidGlassRim(cornerRadius: 17, topIntensity: 0.30))
+                .overlay(
+                    // Soft warm floor reflection grounding Lumi Ember in the hearth stage
+                    Ellipse()
+                        .fill(
+                            RadialGradient(
+                                colors: [store.mascotTheme.eyeGlow.opacity(0.18 * stageGlowMultiplier), Color.clear],
+                                center: .center,
+                                startRadius: 2,
+                                endRadius: 40
+                            )
+                        )
+                        .frame(width: 82, height: 16)
+                        .offset(y: 23)
+                )
+                .overlay(
+                    store.mascotMood == .celebrating
+                        ? AnyView(
+                            RoundedRectangle(cornerRadius: 17, style: .continuous)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [
+                                            LumiPalette.emberOrange.opacity(0.75),
+                                            LumiPalette.emberGold.opacity(0.35),
+                                            LumiPalette.emberOrange.opacity(0.55)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1.15
+                                )
+                        )
+                        : AnyView(liquidGlassRim(cornerRadius: 17, topIntensity: 0.24))
+                )
 
             VStack(spacing: 3) {
                 Spacer(minLength: 4)
@@ -144,26 +189,12 @@ struct StudioBentoBoardView: View {
 
                 Text(shortStageCaption)
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.68))
+                    .foregroundColor(LumiPalette.warmSecondary)
                     .lineLimit(1)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 9)
             }
         }
-    }
-
-    private var stageStars: some View {
-        GeometryReader { geo in
-            ZStack {
-                Circle().fill(Color.white.opacity(0.40)).frame(width: 2.0, height: 2.0)
-                    .position(x: geo.size.width * 0.18, y: geo.size.height * 0.22)
-                Circle().fill(store.mascotTheme.eyeGlow.opacity(0.55)).frame(width: 2.4, height: 2.4)
-                    .position(x: geo.size.width * 0.84, y: geo.size.height * 0.20)
-                Circle().fill(Color.white.opacity(0.26)).frame(width: 1.8, height: 1.8)
-                    .position(x: geo.size.width * 0.78, y: geo.size.height * 0.64)
-            }
-        }
-        .allowsHitTesting(false)
     }
 
     private var shortStageCaption: String {
@@ -184,6 +215,7 @@ struct StudioBentoBoardView: View {
         number: Int,
         label: String,
         accent: Color,
+        isRunningTile: Bool,
         isSelected: Bool,
         action: @escaping () -> Void
     ) -> some View {
@@ -192,16 +224,24 @@ struct StudioBentoBoardView: View {
                 Text(String(format: "%02d", number))
                     .font(.system(size: 27, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundColor(number > 0 ? (label == "待查看" ? accent : Color.white) : Color.white.opacity(0.28))
+                    .foregroundColor(
+                        number > 0
+                            ? (isRunningTile ? LumiPalette.warmPrimary : accent)
+                            : LumiPalette.warmSubtle.opacity(0.65)
+                    )
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
-                    Circle()
-                        .fill(number > 0 ? accent : Color.white.opacity(0.22))
-                        .frame(width: 6, height: 6)
+                    if isRunningTile {
+                        TelemetryPulseBars(active: number > 0, color: LumiPalette.runningIvory)
+                    } else {
+                        Circle()
+                            .fill(number > 0 ? LumiPalette.emberOrange : Color.white.opacity(0.22))
+                            .frame(width: 6, height: 6)
+                    }
                     Text(label)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.68))
+                        .foregroundColor(LumiPalette.warmSecondary)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -211,9 +251,20 @@ struct StudioBentoBoardView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(glassCardFill)
+                    if !isRunningTile && number > 0 {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(
+                                RadialGradient(
+                                    colors: [LumiPalette.emberOrange.opacity(0.11), Color.clear],
+                                    center: .topLeading,
+                                    startRadius: 2,
+                                    endRadius: 85
+                                )
+                            )
+                    }
                     if isSelected {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(accent.opacity(0.14))
+                            .fill((isRunningTile ? LumiPalette.runningIvory : LumiPalette.emberOrange).opacity(0.14))
                     }
                 }
             )
@@ -221,9 +272,9 @@ struct StudioBentoBoardView: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(
                         isSelected
-                            ? LinearGradient(colors: [accent.opacity(0.65), accent.opacity(0.20)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            : liquidGlassGradient(topIntensity: 0.26),
-                        lineWidth: isSelected ? 1.0 : 0.7
+                            ? LinearGradient(colors: [accent.opacity(0.60), accent.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            : liquidGlassGradient(topIntensity: 0.22),
+                        lineWidth: isSelected ? 1.0 : 0.75
                     )
             )
         }
@@ -293,11 +344,11 @@ struct StudioBentoBoardView: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(active ? store.mascotTheme.eyeGlow : Color.white.opacity(0.68))
+                .foregroundColor(active ? store.mascotTheme.eyeGlow : LumiPalette.warmSecondary)
                 .frame(width: 24, height: 22)
                 .background(
                     Circle()
-                        .fill(active ? Color.white.opacity(0.14) : Color.clear)
+                        .fill(active ? store.mascotTheme.bodyTop.opacity(0.18) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -382,7 +433,7 @@ struct StudioBentoBoardView: View {
                     } label: {
                         Text("全部已读")
                             .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundColor(Color(red: 0.38, green: 0.92, blue: 0.66))
+                            .foregroundColor(LumiPalette.emberGold)
                     }
                     .buttonStyle(.plain)
                     .padding(.leading, 4)
@@ -392,7 +443,7 @@ struct StudioBentoBoardView: View {
             .padding(.vertical, 9)
 
             Rectangle()
-                .fill(Color.white.opacity(0.10))
+                .fill(LumiPalette.warmDivider)
                 .frame(height: 0.5)
 
             ScrollView {
@@ -534,7 +585,7 @@ struct StudioBentoBoardView: View {
     private func subtleGroupHeader(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(Color.white.opacity(0.44))
+            .foregroundColor(LumiPalette.warmSubtle)
             .padding(.horizontal, 12)
             .padding(.top, 5)
             .padding(.bottom, 2)
@@ -542,16 +593,16 @@ struct StudioBentoBoardView: View {
 
     private var rowDivider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(LumiPalette.warmDivider)
             .frame(height: 0.5)
-            .padding(.leading, 36)
+            .padding(.leading, 51)
             .padding(.trailing, 12)
     }
 
     private func emptyState(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11.5))
-            .foregroundColor(Color.white.opacity(0.45))
+            .foregroundColor(LumiPalette.warmSubtle)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 28)
     }
@@ -559,10 +610,10 @@ struct StudioBentoBoardView: View {
     private func liquidGlassGradient(topIntensity: Double) -> LinearGradient {
         LinearGradient(
             colors: [
-                Color.white.opacity(topIntensity),
-                Color.white.opacity(topIntensity * 0.35),
-                Color.white.opacity(0.04),
-                Color.white.opacity(topIntensity * 0.45)
+                LumiPalette.champagneRim.opacity(topIntensity),
+                LumiPalette.champagneRim.opacity(topIntensity * 0.34),
+                Color.white.opacity(0.03),
+                LumiPalette.emberGold.opacity(topIntensity * 0.38)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
