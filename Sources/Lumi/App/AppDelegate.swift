@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let hotKeyManager = GlobalHotKeyManager()
     private var localKeyMonitor: Any?
     private let store = MonitorStore()
-    private lazy var menuBarEmberIcon: NSImage = makeMenuBarEmberTemplateIcon()
+    private lazy var menuBarEmberIcon: NSImage = makeMenuBarEmberIcon()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupNotifications()
@@ -155,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - Menu Bar
 
     private func setupStatusBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let btn = statusItem.button else { return }
         btn.target = self
         btn.action = #selector(statusItemClicked(_:))
@@ -163,16 +163,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updateStatusItem(running: 0, unread: 0, needsInput: 0)
     }
 
-    /// Draws an ultra-crisp 18x18 monochrome template Lumi Ember bean silhouette
-    /// with punched-out asymmetric eyes & smile so macOS adapts it automatically to Light/Dark menu bars.
-    private func makeMenuBarEmberTemplateIcon() -> NSImage {
+    /// Draws an ultra-crisp 18x18 full-color warm-orange Lumi Ember bean icon for the macOS menu bar
+    /// (clean icon-only footprint — zero redundant counter text).
+    private func makeMenuBarEmberIcon() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let img = NSImage(size: size, flipped: true) { bounds in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let w: CGFloat = 14.0
-            let h: CGFloat = 14.6
+            let w: CGFloat = 15.2
+            let h: CGFloat = 15.8
             let ox = (bounds.width - w) * 0.5
-            let oy = (bounds.height - h) * 0.5 + 0.3
+            let oy = (bounds.height - h) * 0.5 + 0.2
 
             func pt(_ nx: CGFloat, _ ny: CGFloat) -> CGPoint {
                 CGPoint(x: ox + nx * w, y: oy + ny * h)
@@ -190,48 +190,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             body.addCurve(to: pt(0.51, 0.00), control1: pt(0.28, 0.04), control2: pt(0.39, 0.00))
             body.closeSubpath()
 
-            ctx.setFillColor(NSColor.black.cgColor)
+            // Diagonal warm tangerine -> coral Headspace fill
+            ctx.saveGState()
             ctx.addPath(body)
-            ctx.fillPath()
+            ctx.clip()
+            let cs = CGColorSpaceCreateDeviceRGB()
+            let gradColors = [
+                CGColor(colorSpace: cs, components: [0.965, 0.576, 0.224, 1.0])!, // #F69339
+                CGColor(colorSpace: cs, components: [0.953, 0.482, 0.259, 1.0])!, // #F37B42
+                CGColor(colorSpace: cs, components: [0.957, 0.408, 0.286, 1.0])!  // #F46849
+            ] as CFArray
+            let locations: [CGFloat] = [0.0, 0.58, 1.0]
+            if let grad = CGGradient(colorsSpace: cs, colors: gradColors, locations: locations) {
+                ctx.drawLinearGradient(
+                    grad,
+                    start: CGPoint(x: ox + w * 0.85, y: oy),
+                    end: CGPoint(x: ox + w * 0.15, y: oy + h),
+                    options: []
+                )
+            }
+            ctx.restoreGState()
 
-            // Punch out signature asymmetric eyes + tilted goofy smile
-            ctx.setBlendMode(.clear)
-            let lEye = CGRect(x: pt(0.35, 0.45).x - 1.55, y: pt(0.35, 0.45).y - 1.55, width: 3.1, height: 3.1)
-            let rEye = CGRect(x: pt(0.68, 0.39).x - 1.95, y: pt(0.68, 0.39).y - 1.95, width: 3.9, height: 3.9)
+            // Signature big asymmetric white eyes (#FEFEFE)
+            let lCenter = pt(0.34, 0.45)
+            let rCenter = pt(0.68, 0.39)
+            let lDia: CGFloat = 4.1
+            let rDia: CGFloat = 4.9
+            let lEye = CGRect(x: lCenter.x - lDia * 0.5, y: lCenter.y - lDia * 0.5, width: lDia, height: lDia)
+            let rEye = CGRect(x: rCenter.x - rDia * 0.5, y: rCenter.y - rDia * 0.5, width: rDia, height: rDia)
+
+            ctx.setFillColor(CGColor(colorSpace: cs, components: [0.996, 0.996, 0.996, 1.0])!)
             ctx.fillEllipse(in: lEye)
             ctx.fillEllipse(in: rEye)
 
+            // Charcoal inward-focused goofy pupils (#252D3A)
+            let ink = CGColor(colorSpace: cs, components: [0.145, 0.175, 0.228, 1.0])!
+            ctx.setFillColor(ink)
+            let lp: CGFloat = 1.95
+            let rp: CGFloat = 2.25
+            ctx.fillEllipse(in: CGRect(x: lCenter.x + 0.50 - lp * 0.5, y: lCenter.y - lp * 0.5, width: lp, height: lp))
+            ctx.fillEllipse(in: CGRect(x: rCenter.x - 0.55 - rp * 0.5, y: rCenter.y + 0.15 - rp * 0.5, width: rp, height: rp))
+
+            // Warm tilted smile
             let smile = CGMutablePath()
-            smile.move(to: pt(0.42, 0.68))
-            smile.addQuadCurve(to: pt(0.60, 0.65), control: pt(0.51, 0.78))
+            smile.move(to: pt(0.41, 0.70))
+            smile.addQuadCurve(to: pt(0.60, 0.67), control: pt(0.51, 0.80))
+            ctx.setStrokeColor(ink)
             ctx.setLineWidth(1.25)
             ctx.setLineCap(.round)
             ctx.addPath(smile)
             ctx.strokePath()
 
-            // Tiny solid pupils inside punched-out eyes
-            ctx.setBlendMode(.normal)
-            ctx.setFillColor(NSColor.black.cgColor)
-            ctx.fillEllipse(in: CGRect(x: lEye.midX - 0.55, y: lEye.midY - 0.65, width: 1.35, height: 1.35))
-            ctx.fillEllipse(in: CGRect(x: rEye.midX - 0.85, y: rEye.midY - 0.60, width: 1.55, height: 1.55))
-
             return true
         }
-        img.isTemplate = true
+        img.isTemplate = false
         return img
     }
 
     private func updateStatusItem(running: Int, unread: Int, needsInput: Int) {
         guard let btn = statusItem?.button else { return }
-        var parts: [String] = []
-        if needsInput > 0 { parts.append("?\(needsInput)") }
-        if running > 0 { parts.append("⚡\(running)") }
-        if unread > 0 { parts.append("✓\(unread)") }
-        if store.isDNDActive { parts.append("☾") }
-
         btn.image = menuBarEmberIcon
-        btn.imagePosition = parts.isEmpty ? .imageOnly : .imageLeading
-        btn.title = parts.isEmpty ? "" : " " + parts.joined(separator: " · ")
+        btn.imagePosition = .imageOnly
+        btn.title = ""
         btn.toolTip = store.l10n.statusTooltip(
             running: running,
             unread: unread,

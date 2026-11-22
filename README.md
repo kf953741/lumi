@@ -145,7 +145,7 @@ open -a /Applications/Lumi.app
 - **Expand / Collapse Notch**: Gently move your cursor over the MacBook notch, press **`⌥L`** from anywhere (configurable in Settings; press **`Esc`** to dismiss), or click the menu bar Lumi Ember icon.
 - **Jump, Duration & Auto-Read**: **Single-click** any completed row in **Unread** (displaying finish clock + total run duration) to switch directly to that conversation — Lumi automatically marks it read and moves it into **Recently Read**. Hovering also reveals a quick `✓` button to mark read without switching windows.
 - **Switch Form Factor & Theme**: Click **Desktop** in the control strip to pop out into a draggable floating board (toggle between **Warm Charcoal** and **Morning Oat Light** with the `☀ / ☾` icon); click **Notch** anytime to dock back.
-- **Quick Menu, DND & Language**: Right-click the menu bar Lumi Ember silhouette icon to switch modes, enable **Do Not Disturb (30 min / 1 hr)**, hot-switch **English / 简体中文** without restarting, mark all read, open Settings, or **Quit Lumi** (`⌘Q`).
+- **Quick Menu, DND & Language**: Right-click the warm-orange menu bar Lumi Ember icon to switch modes, enable **Do Not Disturb (30 min / 1 hr)**, hot-switch **English / 简体中文** without restarting, mark all read, open Settings, or **Quit Lumi** (`⌘Q`).
 
 ### 2. Connecting AI Coding Agents
 1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, and **Claude Code** are tracked automatically with zero setup.

@@ -11,7 +11,7 @@ All notable changes to **Lumi** will be documented in this file.
 - **Smart Fullscreen Auto-Peek Guard**: Automatically suppresses completion notch auto-peeks during fullscreen video playback, games, or presentations (configurable in Settings).
 - **Morning Oat Light Theme for Floating Board**: Added an optional Headspace-inspired warm parchment light appearance (`FloatingAppearance.oatLight`) with 1-click `☀ / ☾` toggle on the Floating Board while keeping Dynamic Notch seamlessly matte-black at the hardware bezel.
 - **Do Not Disturb Quick Mute & Manual Update Checker**: Added 30-minute / 1-hour DND mute controls in both the Menu Bar and Settings, plus a strictly user-initiated GitHub Releases update checker (`UpdateChecker.swift`) that preserves zero background network activity.
-- **Custom Menu Bar Lumi Ember Icon & Completed Run Duration**: Replaced the generic menu bar sparkle with a custom 18×18 adaptive template Lumi Ember bean silhouette and added total run duration (`17:05 · 2m18s`) on finished session rows.
+- **Custom Menu Bar Lumi Ember Icon & Completed Run Duration**: Replaced menu bar counters with a clean 18×18 full-color warm-orange Lumi Ember bean icon and added total run duration (`17:05 · 2m18s`) on finished session rows.
 
 ## [1.2.0] - 2026-11-22
 
