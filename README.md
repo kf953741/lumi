@@ -42,7 +42,7 @@ When you run 5–10 AI coding conversations in parallel across **Antigravity**, 
 | **Dual Form Factor** | Notch-only or window-only | **Dynamic Notch Island ↔ 1-Click Floating Desktop Board** — seamless concave bezel fusion on MacBook Pro/Air, auto-adapts to non-notch external monitors |
 | **Subagent & Noise Hygiene** | Subagents & CLI jobs flood the list | Rolls active subagents into **`+N` badges** on the parent dialog; separates standalone chats from headless CLI runs; 4.5s settle debounce prevents premature finish popups |
 | **Zero-Config + Hooks** | Manual JSON editing required | **Out-of-the-box local watch** for Antigravity, Codex (Desktop & CLI), and Claude Code + **1-click Hook Installer** (with automatic backup) for all 6 agents |
-| **Original Vector Mascot** | Static icon or 60 fps CPU burn | **Lumi** — pure SwiftUI `Canvas` space-ghost with eye tracking, headphones, confetti jumps, `Zzz` sleep & dizzy easter egg — **adaptive FPS (< 2% idle CPU)** |
+| **Original Vector Mascot** | Static icon or 60 fps CPU burn | **Lumi Ember** — warm Californian editorial luminous bean drawn in pure SwiftUI `Canvas` with goofy asymmetric eyes, `{ }` coding squint, joyful confetti jumps, slumped `Zzz` sleep & dizzy easter egg — **adaptive FPS (< 2% idle CPU)** |
 
 ---
 
@@ -50,7 +50,7 @@ When you run 5–10 AI coding conversations in parallel across **Antigravity**, 
 
 ### Live Interactive Preview
 
-Hover the MacBook notch to expand, watch Lumi code with glowing headphones, jump with confetti when a task completes, and single-click any Unread card to jump straight back to the conversation and auto-mark it read.
+Hover the MacBook notch to expand, watch Lumi Ember squint intensely at `{ }`, leap with goofy joy & confetti when a task completes, and single-click any Unread card to jump straight back to the conversation and auto-mark it read.
 
 <div align="center">
   <img src="docs/assets/lumi-demo.gif" width="92%" alt="Lumi Live Interactive Demo Animation" />
@@ -64,17 +64,17 @@ Hover over your MacBook's hardware notch to unfold a high-contrast smoked obsidi
   <img src="docs/assets/dual-modes.png" width="100%" alt="Lumi Dynamic Notch Island and Detachable Floating Desktop Board" />
 </div>
 
-### 2. Meet Lumi — Interactive Vector Mascot
+### 2. Meet Lumi Ember — Original Goofy-Cute Vector Mascot
 
-Lumi is drawn entirely with vector SwiftUI `Canvas` (no heavy GIFs or Lottie bundles) and reacts live to your agents and your cursor:
-- **Working**: Puts on glowing translucent headphones, subtly scans code, and taps rhythmically.
-- **Celebrating**: Jumps with colorful confetti the moment a standalone conversation completes.
-- **Waiting Unread**: Displays a floating golden sparkle so you know finished work is waiting.
-- **Idle Sleeping**: Drifts gently with floating `Zzz` bubbles at **1 fps** to save battery.
-- **Easter Egg**: Click Lumi **4 times in a row** to make it dizzy (`@ @`)!
+Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF bloat, zero third-party libraries) and reacts live to your agents and cursor with warm, goofy-cute personality:
+- **Working**: Squashes forward with furrowed brows squinting intently at `{ }` code braces.
+- **Celebrating**: Leaps airborne with a huge goofy open grin and flat geometric confetti the moment a conversation completes.
+- **Waiting Unread**: Keeps a curious asymmetric gaze with a floating golden spark so finished work never gets missed.
+- **Idle Sleeping**: Melts sideways into a cozy slumped puddle with heavy droopy eyelids and `Zzz` at **1 fps** to save battery.
+- **Easter Egg**: Poke Lumi **4 times in a row** to trigger spinning `@ @` dizzy eyes!
 
 <div align="center">
-  <img src="docs/assets/mascot-showcase.png" width="100%" alt="Lumi Mascot 6 Moods and 6 Color Themes" />
+  <img src="docs/assets/mascot-showcase.png" width="100%" alt="Lumi Ember Mascot 6 Moods and 6 Color Themes" />
 </div>
 
 ### 3. Zero-Config Local Watch + 1-Click Hook Installer
@@ -132,7 +132,7 @@ open -a /Applications/Lumi.app
 
 > **Note:** To package your own distributable `.dmg` with SHA-256 checksum:
 > ```bash
-> ./scripts/package_dmg.sh 1.0.0
+> ./scripts/package_dmg.sh 1.1.0
 > ```
 
 ---
@@ -189,7 +189,7 @@ flowchart LR
 Sources/Lumi/
 ├── App/         # AppDelegate, Menu Bar status item, NotchWindowController (hardware notch geometry)
 ├── Core/        # Antigravity, Codex, Claude, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
-├── Mascot/      # LumiMascotView (SwiftUI Canvas space-ghost with adaptive FPS & cursor gaze)
+├── Mascot/      # LumiMascotView (Lumi Ember SwiftUI Canvas mascot with adaptive FPS & cursor gaze)
 ├── Models/      # AgentModels, smart ProjectNameHelper, ToolActionFormatter
 └── UI/          # NotchIslandView, FloatingBoardView, StudioBentoBoardView, SessionCardView, SettingsView
 ```

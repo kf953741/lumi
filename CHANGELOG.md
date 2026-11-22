@@ -2,6 +2,16 @@
 
 All notable changes to **Lumi** will be documented in this file.
 
+## [1.1.0] - 2026-11-22
+
+### Changed
+- **Brand-New Original Mascot (`Lumi Ember`)**: Replaced the earlier space-ghost silhouette with an unmistakable, lineless Californian editorial warm-tangerine luminous bean featuring goofy asymmetric eyes, hyper-focused `{ }` coding squint, ecstatic open-grin confetti jumps, slumped droopy-eyelid `Zzz` sleep, and 6 warm cohesive themes (`Ember`, `Butter`, `Aurora`, `Nebula`, `Berry`, `Cloud`).
+- **Redesigned App Icon & GitHub Showcase**: Updated the 1024×1024 vector `AppIcon.icns`, Open Graph social preview, static Bento visuals, and 10-second animated demo GIF featuring authentic Antigravity 2.0 and OpenAI Codex Desktop jump transitions.
+- **Swift 6.0 / macOS 15 CI Compatibility**: Disambiguated `Foundation.sin`/`Foundation.cos` calls for clean green builds across Xcode 16+ and macOS 15+ runners.
+
+### Added
+- **Homebrew Cask Formula**: Added `Casks/lumi.rb` for one-command installation via `brew tap kf953741/lumi https://github.com/kf953741/lumi && brew install --cask kf953741/lumi/lumi`.
+
 ## [1.0.0] - 2026-11-22
 
 ### Added

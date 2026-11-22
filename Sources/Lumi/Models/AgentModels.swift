@@ -113,56 +113,100 @@ public enum DisplayMode: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 public enum MascotTheme: String, Codable, CaseIterable, Identifiable, Sendable {
-    case nebula   // 星云紫
-    case aurora   // 极光青
-    case cloud    // 经典奶白
-    case coral    // 活力珊瑚
-    case sakura   // 樱花粉
-    case obsidian // 极夜黑
+    case ember   // 加州暖橘（默认主色）
+    case butter  // 奶油杏黄
+    case aurora  // 薄荷极光
+    case nebula  // 星云淡紫
+    case sakura  // 珊瑚莓粉
+    case cloud   // 云朵奶白
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .nebula:   return "星云紫"
-        case .aurora:   return "极光青"
-        case .cloud:    return "云朵白"
-        case .coral:    return "珊瑚橘"
-        case .sakura:   return "樱花粉"
-        case .obsidian: return "极夜黑"
+        case .ember:  return "加州暖橘"
+        case .butter: return "奶油杏黄"
+        case .aurora: return "薄荷极光"
+        case .nebula: return "星云淡紫"
+        case .sakura: return "珊瑚莓粉"
+        case .cloud:  return "云朵奶白"
+        }
+    }
+
+    public var englishName: String {
+        switch self {
+        case .ember:  return "Ember"
+        case .butter: return "Butter"
+        case .aurora: return "Aurora"
+        case .nebula: return "Nebula"
+        case .sakura: return "Berry"
+        case .cloud:  return "Cloud"
         }
     }
 
     public var bodyTop: Color {
         switch self {
-        case .nebula:   return Color(red: 0.78, green: 0.62, blue: 1.00)
-        case .aurora:   return Color(red: 0.44, green: 0.94, blue: 0.86)
-        case .cloud:    return Color(red: 0.97, green: 0.98, blue: 1.00)
-        case .coral:    return Color(red: 1.00, green: 0.64, blue: 0.48)
-        case .sakura:   return Color(red: 1.00, green: 0.74, blue: 0.86)
-        case .obsidian: return Color(red: 0.30, green: 0.33, blue: 0.40)
+        case .ember:  return Color(red: 0.965, green: 0.576, blue: 0.224) // #F69339
+        case .butter: return Color(red: 1.000, green: 0.820, blue: 0.400) // #FFD166
+        case .aurora: return Color(red: 0.300, green: 0.880, blue: 0.700) // #4CE0B3
+        case .nebula: return Color(red: 0.663, green: 0.545, blue: 1.000) // #A98BFF
+        case .sakura: return Color(red: 1.000, green: 0.561, blue: 0.659) // #FF8FA8
+        case .cloud:  return Color(red: 0.915, green: 0.892, blue: 0.848) // #E9E3D8
+        }
+    }
+
+    public var bodyMid: Color {
+        switch self {
+        case .ember:  return Color(red: 0.953, green: 0.482, blue: 0.259) // #F37B42
+        case .butter: return Color(red: 0.975, green: 0.725, blue: 0.295)
+        case .aurora: return Color(red: 0.195, green: 0.765, blue: 0.625)
+        case .nebula: return Color(red: 0.545, green: 0.430, blue: 0.940)
+        case .sakura: return Color(red: 0.960, green: 0.440, blue: 0.565)
+        case .cloud:  return Color(red: 0.862, green: 0.832, blue: 0.780)
         }
     }
 
     public var bodyBottom: Color {
         switch self {
-        case .nebula:   return Color(red: 0.50, green: 0.34, blue: 0.92)
-        case .aurora:   return Color(red: 0.14, green: 0.68, blue: 0.72)
-        case .cloud:    return Color(red: 0.84, green: 0.88, blue: 0.96)
-        case .coral:    return Color(red: 0.94, green: 0.38, blue: 0.36)
-        case .sakura:   return Color(red: 0.94, green: 0.48, blue: 0.70)
-        case .obsidian: return Color(red: 0.14, green: 0.16, blue: 0.22)
+        case .ember:  return Color(red: 0.957, green: 0.408, blue: 0.286) // #F46849
+        case .butter: return Color(red: 0.945, green: 0.612, blue: 0.230)
+        case .aurora: return Color(red: 0.125, green: 0.643, blue: 0.541)
+        case .nebula: return Color(red: 0.443, green: 0.333, blue: 0.898)
+        case .sakura: return Color(red: 0.918, green: 0.353, blue: 0.490)
+        case .cloud:  return Color(red: 0.800, green: 0.764, blue: 0.706)
+        }
+    }
+
+    public var eyelidColor: Color {
+        switch self {
+        case .ember:  return Color(red: 0.890, green: 0.455, blue: 0.212) // #E37436
+        case .butter: return Color(red: 0.875, green: 0.620, blue: 0.215)
+        case .aurora: return Color(red: 0.145, green: 0.655, blue: 0.525)
+        case .nebula: return Color(red: 0.465, green: 0.355, blue: 0.825)
+        case .sakura: return Color(red: 0.855, green: 0.365, blue: 0.490)
+        case .cloud:  return Color(red: 0.755, green: 0.718, blue: 0.660)
+        }
+    }
+
+    public var specularColor: Color {
+        switch self {
+        case .ember:  return Color(red: 0.976, green: 0.620, blue: 0.350) // #F99E59
+        case .butter: return Color(red: 1.000, green: 0.900, blue: 0.600)
+        case .aurora: return Color(red: 0.550, green: 0.950, blue: 0.830)
+        case .nebula: return Color(red: 0.790, green: 0.710, blue: 1.000)
+        case .sakura: return Color(red: 1.000, green: 0.720, blue: 0.790)
+        case .cloud:  return Color.white
         }
     }
 
     public var eyeGlow: Color {
         switch self {
-        case .nebula:   return Color(red: 0.64, green: 0.94, blue: 1.00)
-        case .aurora:   return Color(red: 0.72, green: 1.00, blue: 0.86)
-        case .cloud:    return Color(red: 0.46, green: 0.86, blue: 1.00)
-        case .coral:    return Color(red: 1.00, green: 0.94, blue: 0.62)
-        case .sakura:   return Color(red: 1.00, green: 0.88, blue: 0.96)
-        case .obsidian: return Color(red: 0.42, green: 0.92, blue: 1.00)
+        case .ember:  return Color(red: 1.000, green: 0.682, blue: 0.353) // #FFAE5A
+        case .butter: return Color(red: 1.000, green: 0.860, blue: 0.480)
+        case .aurora: return Color(red: 0.440, green: 0.945, blue: 0.790)
+        case .nebula: return Color(red: 0.765, green: 0.690, blue: 1.000)
+        case .sakura: return Color(red: 1.000, green: 0.700, blue: 0.775)
+        case .cloud:  return Color(red: 1.000, green: 0.840, blue: 0.620)
         }
     }
 }

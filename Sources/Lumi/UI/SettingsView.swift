@@ -30,7 +30,7 @@ struct SettingsView: View {
             Divider()
 
             HStack {
-                Text("Lumi v1.0.0 · MIT License")
+                Text("Lumi v1.1.0 · MIT License")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -84,7 +84,7 @@ struct SettingsView: View {
 
             Section("开源项目信息") {
                 HStack {
-                    Text("Lumi v1.0.0 · MIT License")
+                    Text("Lumi v1.1.0 · MIT License")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()

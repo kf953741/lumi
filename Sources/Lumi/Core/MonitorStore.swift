@@ -100,7 +100,7 @@ final class MonitorStore: ObservableObject {
         let d = UserDefaults.standard
         d.register(defaults: [
             "displayMode": DisplayMode.notch.rawValue,
-            "mascotTheme": MascotTheme.nebula.rawValue,
+            "mascotTheme": MascotTheme.ember.rawValue,
             "alwaysOnTop": true,
             "hoverToExpand": true,
             "soundEnabled": true,
@@ -110,8 +110,13 @@ final class MonitorStore: ObservableObject {
             "selectedScreenName": "auto",
             "autoJumpAntigravity": true
         ])
+        // One-time upgrade migration to the new signature warm tangerine Lumi Ember theme
+        if d.integer(forKey: "mascotArtVersion") < 2 {
+            d.set(2, forKey: "mascotArtVersion")
+            d.set(MascotTheme.ember.rawValue, forKey: "mascotTheme")
+        }
         self.displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .notch
-        self.mascotTheme = MascotTheme(rawValue: d.string(forKey: "mascotTheme") ?? "") ?? .nebula
+        self.mascotTheme = MascotTheme(rawValue: d.string(forKey: "mascotTheme") ?? "") ?? .ember
         self.alwaysOnTop = d.bool(forKey: "alwaysOnTop")
         self.hoverToExpand = d.bool(forKey: "hoverToExpand")
         self.soundEnabled = d.bool(forKey: "soundEnabled")

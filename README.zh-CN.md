@@ -42,7 +42,7 @@
 | **双形态无缝切换** | 仅刘海或仅小窗 | **刘海灵动岛 ↔ 一键桌面悬浮看板**：内凹曲面无缝融进 MacBook 物理刘海，外接非刘海屏自动切换悬浮胶囊 |
 | **子 Agent 折叠与防误报** | 子 Agent、CLI 批处理疯狂刷屏 | 自动把活跃子 Agent 折叠成父对话上的 **`+N` 徽标**，默认隐藏后台 CLI 批处理任务，内置 4.5 秒收尾防抖杜绝中途误报 |
 | **开箱即用 + 一键 Hook** | 必须手改多份配置文件 | **Antigravity / Codex（桌面版与 CLI）/ Claude Code 零配置自动发现** + 设置页一键接入/卸载 6 家 Hook（自动备份原配置） |
-| **原创动态矢量萌宠** | 静态图标或 60fps 常驻费电 | **原创太空小幽灵 Lumi**：眼神跟随鼠标、写代码戴发光耳机、完工抛彩带跳跃、空闲 `Zzz` 打盹、连戳 4 下会转晕，**自适应帧率（空闲 CPU < 2%）** |
+| **原创动态矢量萌宠** | 静态图标或 60fps 常驻费电 | **原创暖橘萌宠 Lumi Ember**：不对称戏精大眼、干活死死眯眼盯 `{ }`、完工咧嘴憨笑弹起抛几何彩纸、空闲歪倒摊平半闭眼冒 `Zzz`、连戳 4 下转晕，**自适应帧率（空闲 CPU < 2%）** |
 
 ---
 
@@ -50,7 +50,7 @@
 
 ### 实时交互动效预览
 
-悬停 MacBook 刘海丝滑展开 → Lumi 戴发光耳机写代码、实时计时 → 任务完工跃起抛彩带进入「待查看」→ 单击直接跳回原对话并自动已读。
+悬停 MacBook 刘海丝滑展开 → Lumi Ember 眯眼盯 `{ }` 实时计时 → 任务完工憨笑跳起抛彩纸进入「待查看」→ 单击直接切到原对话窗口并自动已读。
 
 <div align="center">
   <img src="docs/assets/lumi-demo.gif" width="92%" alt="Lumi 实时交互动效演示" />
@@ -64,17 +64,17 @@
   <img src="docs/assets/dual-modes.png" width="100%" alt="Lumi 刘海灵动岛与桌面悬浮看板双形态展示" />
 </div>
 
-### 2. 原创矢量萌宠 Lumi（6 种状态 × 6 套配色）
+### 2. 原创暖橘萌宠 Lumi Ember（6 种情绪 × 6 套配色）
 
-完全使用原生 SwiftUI `Canvas` 矢量绘制，无 GIF/Lottie 体积负担，实时响应你的 Agent 状态与鼠标位置：
-- **干活中**：戴上发光半透明耳机，专注扫视代码、小手敲击键盘；
-- **完工庆祝**：独立对话完成瞬间高高跃起抛彩带；
-- **待查看提醒**：头顶飘起金色星标，提醒你有成果等你验收；
-- **空闲打盹**：降频至 **1 fps** 飘出 `Zzz` 气泡，极致省电；
+完全使用纯原生无描边 SwiftUI `Canvas` 矢量绘制，融合加州暖橘治愈美学与戏精蠢萌表情，零 GIF/Lottie 负担：
+- **干活中**：歪身前倾、紧皱眉头死死眯眼盯着代码括号 `{ }`；
+- **完工庆祝**：腾空跃起咧嘴憨笑，炸出简约暖色几何彩纸；
+- **待查看提醒**：大小眼好奇张望，头顶飘起暖金星标；
+- **空闲打盹**：直接歪倒摊成一团软糯暖橘，拉下沉重半闭眼皮、以 **1 fps** 飘出 `Zzz`；
 - **彩蛋互动**：连续戳 Lumi **4 下** 会转晕冒 `@ @` 蚊香眼！
 
 <div align="center">
-  <img src="docs/assets/mascot-showcase.png" width="100%" alt="Lumi 萌宠 6 种情绪与 6 套主题配色" />
+  <img src="docs/assets/mascot-showcase.png" width="100%" alt="Lumi Ember 萌宠 6 种情绪与 6 套主题配色" />
 </div>
 
 ### 3. 开箱即用 + 6 大 AI 工具一键接入
@@ -132,7 +132,7 @@ open -a /Applications/Lumi.app
 
 > **自行打包发布 `.dmg`（含 SHA-256 校验值）：**
 > ```bash
-> ./scripts/package_dmg.sh 1.0.0
+> ./scripts/package_dmg.sh 1.1.0
 > ```
 
 ---
@@ -189,7 +189,7 @@ flowchart LR
 Sources/Lumi/
 ├── App/         # AppDelegate、菜单栏状态项、NotchWindowController（物理刘海几何贴合）
 ├── Core/        # Antigravity / Codex / Claude / 扩展扫描器、WAL 安全 SQLiteReader、HookInstaller、MonitorStore
-├── Mascot/      # LumiMascotView（自适应帧率 SwiftUI Canvas 矢量太空萌宠）
+├── Mascot/      # LumiMascotView（Lumi Ember 原创自适应帧率 SwiftUI Canvas 暖橘萌宠）
 ├── Models/      # AgentModels、智能项目名消歧 ProjectNameHelper、工具动作格式化
 └── UI/          # NotchIslandView、FloatingBoardView、StudioBentoBoardView、SessionCardView、SettingsView
 ```

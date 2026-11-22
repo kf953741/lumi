@@ -1,7 +1,8 @@
 #!/usr/bin/env swift
 import Cocoa
 
-// Generates a crisp 1024x1024 macOS squircle icon with Lumi mascot
+// Generates a crisp 1024x1024 macOS squircle App Icon featuring "Lumi Ember"
+// (Headspace-inspired warm tangerine asymmetric-eye luminous bean on dark slate squircle)
 let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "AppIcon_1024.png"
 let size: CGFloat = 1024
 let rep = NSBitmapImageRep(
@@ -22,69 +23,82 @@ let ctx = NSGraphicsContext(bitmapImageRep: rep)!
 NSGraphicsContext.current = ctx
 let cg = ctx.cgContext
 
-// 1. Rounded macOS App Icon squircle background
-let inset: CGFloat = 92
+// Flip Y to match top-down SwiftUI coordinates for identical vector math!
+cg.translateBy(x: 0, y: size)
+cg.scaleBy(x: 1, y: -1)
+
+let cs = CGColorSpaceCreateDeviceRGB()
+
+// 1. Rounded macOS App Icon squircle background (#18202B -> #141922)
+let inset: CGFloat = 88
 let iconRect = CGRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
-let bgPath = CGPath(roundedRect: iconRect, cornerWidth: 192, cornerHeight: 192, transform: nil)
+let bgPath = CGPath(roundedRect: iconRect, cornerWidth: 196, cornerHeight: 196, transform: nil)
 
 cg.saveGState()
 cg.addPath(bgPath)
 cg.clip()
 
-let cs = CGColorSpaceCreateDeviceRGB()
 let bgGrad = CGGradient(
     colorsSpace: cs,
     colors: [
-        CGColor(red: 0.08, green: 0.09, blue: 0.16, alpha: 1.0),
-        CGColor(red: 0.03, green: 0.04, blue: 0.08, alpha: 1.0)
+        CGColor(red: 0.094, green: 0.125, blue: 0.169, alpha: 1.0), // #18202B
+        CGColor(red: 0.075, green: 0.094, blue: 0.130, alpha: 1.0)  // #131821
     ] as CFArray,
     locations: [0.0, 1.0]
 )!
-cg.drawLinearGradient(bgGrad, start: CGPoint(x: size * 0.5, y: size - inset), end: CGPoint(x: size * 0.5, y: inset), options: [])
+cg.drawLinearGradient(bgGrad, start: CGPoint(x: size * 0.5, y: inset), end: CGPoint(x: size * 0.5, y: size - inset), options: [])
 
-// Nebula radial ambient glow
+// Warm ambient tangerine halo glow behind Lumi Ember
 let glowGrad = CGGradient(
     colorsSpace: cs,
     colors: [
-        CGColor(red: 0.66, green: 0.44, blue: 1.0, alpha: 0.52),
-        CGColor(red: 0.18, green: 0.80, blue: 0.78, alpha: 0.16),
+        CGColor(red: 0.961, green: 0.502, blue: 0.220, alpha: 0.44), // #F58038
+        CGColor(red: 0.957, green: 0.408, blue: 0.286, alpha: 0.14),
         CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.0)
     ] as CFArray,
     locations: [0.0, 0.52, 1.0]
 )!
 cg.drawRadialGradient(
     glowGrad,
-    startCenter: CGPoint(x: size * 0.5, y: size * 0.54),
-    startRadius: 30,
-    endCenter: CGPoint(x: size * 0.5, y: size * 0.52),
+    startCenter: CGPoint(x: size * 0.50, y: size * 0.52),
+    startRadius: 40,
+    endCenter: CGPoint(x: size * 0.50, y: size * 0.52),
     endRadius: 420,
     options: []
 )
 
-// Subtle top glass rim
-cg.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.18))
+// Subtle warm glass rim along squircle border
+cg.setStrokeColor(CGColor(red: 1.0, green: 0.68, blue: 0.42, alpha: 0.22))
 cg.setLineWidth(6)
 cg.addPath(bgPath)
 cg.strokePath()
 
-// 2. Draw Lumi space-ghost / capsule body
-let cx = size * 0.5
-let cy = size * 0.50
-let bw: CGFloat = 460
-let bh: CGFloat = 490
-let halfW = bw * 0.5
-let topY = cy + bh * 0.5
-let botY = cy - bh * 0.44
-let domeR = halfW
+// 2. Lineless organic asymmetric pear-bean body ("Lumi Ember")
+let bw: CGFloat = 530
+let bh: CGFloat = bw / 0.955
+let rect = CGRect(x: (size - bw) * 0.5, y: (size - bh) * 0.5 + 8, width: bw, height: bh)
+func pt(_ nx: CGFloat, _ ny: CGFloat) -> CGPoint {
+    CGPoint(x: rect.minX + nx * rect.width, y: rect.minY + ny * rect.height)
+}
 
 let body = CGMutablePath()
-body.move(to: CGPoint(x: cx - halfW, y: topY - domeR))
-body.addArc(center: CGPoint(x: cx, y: topY - domeR), radius: domeR, startAngle: .pi, endAngle: 0, clockwise: true)
-body.addLine(to: CGPoint(x: cx + halfW, y: botY + 38))
-body.addQuadCurve(to: CGPoint(x: cx + halfW * 0.33, y: botY), control: CGPoint(x: cx + halfW * 0.72, y: botY - 34))
-body.addQuadCurve(to: CGPoint(x: cx - halfW * 0.33, y: botY), control: CGPoint(x: cx, y: botY + 30))
-body.addQuadCurve(to: CGPoint(x: cx - halfW, y: botY + 38), control: CGPoint(x: cx - halfW * 0.72, y: botY - 34))
+body.move(to: pt(0.51, 0.00))
+body.addCurve(to: pt(0.91, 0.22), control1: pt(0.71, 0.00), control2: pt(0.84, 0.09))
+body.addCurve(to: pt(1.00, 0.54), control1: pt(0.98, 0.33), control2: pt(1.01, 0.44))
+body.addCurve(to: pt(0.84, 0.85), control1: pt(0.99, 0.67), control2: pt(0.93, 0.77))
+body.addCurve(to: pt(0.40, 1.00), control1: pt(0.73, 0.95), control2: pt(0.56, 1.01))
+body.addCurve(to: pt(0.00, 0.74), control1: pt(0.18, 0.99), control2: pt(0.01, 0.90))
+body.addCurve(to: pt(0.10, 0.40), control1: pt(-0.01, 0.60), control2: pt(0.07, 0.50))
+body.addCurve(to: pt(0.20, 0.14), control1: pt(0.12, 0.28), control2: pt(0.14, 0.20))
+body.addCurve(to: pt(0.51, 0.00), control1: pt(0.28, 0.04), control2: pt(0.39, 0.00))
 body.closeSubpath()
+
+cg.saveGState()
+cg.setShadow(offset: CGSize(width: 0, height: -18), blur: 52, color: CGColor(red: 0.96, green: 0.45, blue: 0.18, alpha: 0.40))
+cg.addPath(body)
+cg.setFillColor(CGColor(red: 0.96, green: 0.52, blue: 0.24, alpha: 1.0))
+cg.fillPath()
+cg.restoreGState()
 
 cg.saveGState()
 cg.addPath(body)
@@ -92,86 +106,69 @@ cg.clip()
 let bodyGrad = CGGradient(
     colorsSpace: cs,
     colors: [
-        CGColor(red: 0.80, green: 0.64, blue: 1.0, alpha: 1.0),
-        CGColor(red: 0.48, green: 0.34, blue: 0.94, alpha: 1.0)
+        CGColor(red: 0.965, green: 0.576, blue: 0.224, alpha: 1.0), // #F69339
+        CGColor(red: 0.953, green: 0.482, blue: 0.259, alpha: 1.0), // #F37B42
+        CGColor(red: 0.957, green: 0.408, blue: 0.286, alpha: 1.0)  // #F46849
     ] as CFArray,
-    locations: [0.0, 1.0]
+    locations: [0.0, 0.58, 1.0]
 )!
-cg.drawLinearGradient(bodyGrad, start: CGPoint(x: cx, y: topY), end: CGPoint(x: cx, y: botY - 20), options: [])
-
-// Top glossy highlight
-let gloss = CGRect(x: cx - 125, y: topY - 115, width: 250, height: 78)
-cg.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.34))
-cg.fillEllipse(in: gloss)
+cg.drawLinearGradient(
+    bodyGrad,
+    start: CGPoint(x: rect.maxX * 0.85 + rect.minX * 0.15, y: rect.minY),
+    end: CGPoint(x: rect.minX * 0.85 + rect.maxX * 0.15, y: rect.maxY),
+    options: []
+)
 cg.restoreGState()
 
-cg.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.42))
-cg.setLineWidth(6)
-cg.addPath(body)
+// 3. Signature Asymmetric White Eyes (#FEFEFE) & Charcoal Pupils (#252E3B)
+let lCenter = pt(0.346, 0.444)
+let rCenter = pt(0.674, 0.383)
+let lDia = bw * 0.232
+let rDia = bw * 0.278
+
+cg.setFillColor(CGColor(red: 0.996, green: 0.996, blue: 0.996, alpha: 1.0))
+cg.fillEllipse(in: CGRect(x: lCenter.x - lDia * 0.5, y: lCenter.y - lDia * 0.5, width: lDia, height: lDia))
+cg.fillEllipse(in: CGRect(x: rCenter.x - rDia * 0.5, y: rCenter.y - rDia * 0.5, width: rDia, height: rDia))
+
+let ink = CGColor(red: 0.145, green: 0.180, blue: 0.231, alpha: 1.0)
+let lpCenter = pt(0.378, 0.441)
+let rpCenter = pt(0.639, 0.399)
+let lpDia = bw * 0.102
+let rpDia = bw * 0.120
+cg.setFillColor(ink)
+cg.fillEllipse(in: CGRect(x: lpCenter.x - lpDia * 0.5, y: lpCenter.y - lpDia * 0.5, width: lpDia, height: lpDia))
+cg.fillEllipse(in: CGRect(x: rpCenter.x - rpDia * 0.5, y: rpCenter.y - rpDia * 0.5, width: rpDia, height: rpDia))
+
+// 4. Expressive Charcoal Eyebrows & Small Tilted U-Smile
+cg.setStrokeColor(ink)
+cg.setLineCap(.round)
+cg.setLineWidth(bw * 0.036)
+
+let lb = CGMutablePath()
+lb.move(to: pt(0.21, 0.320))
+lb.addQuadCurve(to: pt(0.39, 0.256), control: pt(0.29, 0.252))
+cg.addPath(lb)
 cg.strokePath()
 
-// 3. Dark curved space visor
-let vw: CGFloat = 354
-let vh: CGFloat = 198
-let visorRect = CGRect(x: cx - vw * 0.5, y: cy - 10, width: vw, height: vh)
-let visorPath = CGPath(roundedRect: visorRect, cornerWidth: vh * 0.46, cornerHeight: vh * 0.46, transform: nil)
-cg.saveGState()
-cg.addPath(visorPath)
-cg.clip()
-let visorGrad = CGGradient(
-    colorsSpace: cs,
-    colors: [
-        CGColor(red: 0.06, green: 0.07, blue: 0.13, alpha: 1.0),
-        CGColor(red: 0.12, green: 0.14, blue: 0.23, alpha: 1.0)
-    ] as CFArray,
-    locations: [0.0, 1.0]
-)!
-cg.drawLinearGradient(visorGrad, start: CGPoint(x: cx, y: visorRect.maxY), end: CGPoint(x: cx, y: visorRect.minY), options: [])
-cg.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.16))
-cg.addPath(CGPath(roundedRect: CGRect(x: visorRect.minX + 36, y: visorRect.maxY - 52, width: 118, height: 28), cornerWidth: 14, cornerHeight: 14, transform: nil))
-cg.fillPath()
-cg.restoreGState()
-
-cg.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.25))
-cg.setLineWidth(5)
-cg.addPath(visorPath)
+let rb = CGMutablePath()
+rb.move(to: pt(0.58, 0.205))
+rb.addQuadCurve(to: pt(0.76, 0.225), control: pt(0.67, 0.178))
+cg.addPath(rb)
 cg.strokePath()
 
-// 4. Glowing cyan capsule eyes
-let eyeW: CGFloat = 52
-let eyeH: CGFloat = 78
-let eyeY = visorRect.midY - eyeH * 0.5 - 4
-for dx: CGFloat in [-74, 74] {
-    let er = CGRect(x: cx + dx - eyeW * 0.5, y: eyeY, width: eyeW, height: eyeH)
-    let ep = CGPath(roundedRect: er, cornerWidth: eyeW * 0.5, cornerHeight: eyeW * 0.5, transform: nil)
-    cg.setShadow(offset: .zero, blur: 18, color: CGColor(red: 0.52, green: 0.94, blue: 1.0, alpha: 0.85))
-    cg.setFillColor(CGColor(red: 0.62, green: 0.95, blue: 1.0, alpha: 1.0))
-    cg.addPath(ep)
-    cg.fillPath()
-    cg.setShadow(offset: .zero, blur: 0, color: nil)
-    cg.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-    cg.fillEllipse(in: CGRect(x: er.minX + 10, y: er.maxY - 26, width: 17, height: 17))
-}
-
-// 5. Little golden notification sparkle top-right
-let starX = cx + 225
-let starY = cy + 205
-let star = CGMutablePath()
-for i in 0..<8 {
-    let angle = Double(i) * (.pi / 4.0) - .pi / 2.0
-    let r: CGFloat = (i % 2 == 0) ? 54 : 20
-    let pt = CGPoint(x: starX + cos(angle) * r, y: starY + sin(angle) * r)
-    if i == 0 { star.move(to: pt) } else { star.addLine(to: pt) }
-}
-star.closeSubpath()
-cg.setShadow(offset: .zero, blur: 20, color: CGColor(red: 1.0, green: 0.80, blue: 0.24, alpha: 0.9))
-cg.setFillColor(CGColor(red: 1.0, green: 0.84, blue: 0.30, alpha: 1.0))
-cg.addPath(star)
-cg.fillPath()
+cg.setLineWidth(bw * 0.038)
+let mouth = CGMutablePath()
+mouth.move(to: pt(0.445, 0.598))
+mouth.addQuadCurve(to: pt(0.625, 0.558), control: pt(0.545, 0.656))
+cg.addPath(mouth)
+cg.strokePath()
 
 cg.restoreGState()
 NSGraphicsContext.restoreGraphicsState()
 
-let pngData = rep.representation(using: .png, properties: [:])!
-try pngData.write(to: URL(fileURLWithPath: outPath))
-print("Generated icon:", outPath)
+guard let png = rep.representation(using: .png, properties: [:]) else {
+    fputs("Failed to encode PNG\n", stderr)
+    exit(1)
+}
+try png.write(to: URL(fileURLWithPath: outPath))
+print("Generated Lumi Ember icon: \(outPath)")
