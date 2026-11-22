@@ -308,17 +308,17 @@ struct StudioBentoBoardView: View {
                 ) { store.disableDND() }
             }
 
-            if !inNotch {
-                stripIconButton(
-                    icon: surface.isLight ? "moon.fill" : "sun.max.fill",
-                    active: false,
-                    help: t.helpSwitchAppearance
-                ) {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        store.floatingAppearance = (store.floatingAppearance == .oatLight) ? .charcoal : .oatLight
-                    }
+            stripIconButton(
+                icon: surface.isLight ? "moon.fill" : "sun.max.fill",
+                active: surface.isLight,
+                help: t.helpSwitchAppearance
+            ) {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    store.floatingAppearance = (store.floatingAppearance == .oatLight) ? .charcoal : .oatLight
                 }
+            }
 
+            if !inNotch {
                 stripIconButton(
                     icon: store.alwaysOnTop ? "pin.fill" : "pin",
                     active: store.alwaysOnTop,

@@ -68,6 +68,13 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
+                Picker(t.lblFloatingAppearance, selection: $store.floatingAppearance) {
+                    ForEach(FloatingAppearance.allCases) { style in
+                        Text(style.label(isEnglish: store.isEnglish)).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+
                 if store.displayMode == .notch {
                     Toggle(t.lblHoverExpand, isOn: $store.hoverToExpand)
                     Toggle(t.lblFullscreenHide, isOn: $store.hideAutoPeekInFullscreen)
@@ -79,12 +86,6 @@ struct SettingsView: View {
                     }
                 } else {
                     Toggle(t.lblAlwaysOnTop, isOn: $store.alwaysOnTop)
-                    Picker(t.lblFloatingAppearance, selection: $store.floatingAppearance) {
-                        ForEach(FloatingAppearance.allCases) { style in
-                            Text(style.label(isEnglish: store.isEnglish)).tag(style)
-                        }
-                    }
-                    .pickerStyle(.segmented)
                 }
             }
 

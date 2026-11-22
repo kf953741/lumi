@@ -90,6 +90,10 @@ struct NotchIslandView: View {
         isExpanded ? 26 : 13
     }
 
+    private var surface: BoardSurfaceTheme {
+        store.floatingAppearance == .oatLight ? .oatLight : .charcoal
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             if hasHardwareNotch {
@@ -107,31 +111,51 @@ struct NotchIslandView: View {
         let shape = NotchIslandShape(topEarRadius: earRadius, bottomRadius: bottomRadius)
         return ZStack(alignment: .top) {
             if isExpanded {
-                // Smoked frosted dark glass: seamless pitch-black notch cap at top + crisp readable dark glass body
+                // Seamless pitch-black top hardware camera cap + Warm Charcoal OR Morning Oat Light body!
                 ZStack(alignment: .top) {
-                    LiquidGlassBackdrop(material: .hudWindow)
+                    LiquidGlassBackdrop(material: surface.isLight ? .popover : .hudWindow, isLight: surface.isLight)
 
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color.black, location: 0.0),
-                            .init(color: Color.black, location: 0.08),
-                            .init(color: LumiPalette.shellTop.opacity(0.90), location: 0.20),
-                            .init(color: LumiPalette.shellBottom.opacity(0.92), location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                    if surface.isLight {
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.black, location: 0.0),
+                                .init(color: Color.black, location: 0.068),
+                                .init(color: surface.shellTop, location: 0.088),
+                                .init(color: surface.shellBottom, location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    } else {
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.black, location: 0.0),
+                                .init(color: Color.black, location: 0.08),
+                                .init(color: LumiPalette.shellTop.opacity(0.90), location: 0.20),
+                                .init(color: LumiPalette.shellBottom.opacity(0.92), location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
                 }
                 .clipShape(shape)
                 .overlay(
                     shape.stroke(
                         LinearGradient(
-                            stops: [
-                                .init(color: Color.clear, location: 0.0),
-                                .init(color: Color.clear, location: 0.10),
-                                .init(color: LumiPalette.champagneRim.opacity(0.16), location: 0.45),
-                                .init(color: LumiPalette.emberGold.opacity(0.15), location: 1.0)
-                            ],
+                            stops: surface.isLight
+                                ? [
+                                    .init(color: Color.clear, location: 0.0),
+                                    .init(color: Color.clear, location: 0.08),
+                                    .init(color: Color.white.opacity(0.75), location: 0.22),
+                                    .init(color: Color(red: 0.78, green: 0.70, blue: 0.62).opacity(0.55), location: 1.0)
+                                ]
+                                : [
+                                    .init(color: Color.clear, location: 0.0),
+                                    .init(color: Color.clear, location: 0.10),
+                                    .init(color: LumiPalette.champagneRim.opacity(0.16), location: 0.45),
+                                    .init(color: LumiPalette.emberGold.opacity(0.15), location: 1.0)
+                                ],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
@@ -147,6 +171,7 @@ struct NotchIslandView: View {
                     StudioBentoBoardView(
                         store: store,
                         inNotch: true,
+                        surface: surface,
                         lookOffset: lookOffset,
                         onSwitchMode: onPopOutFloating,
                         onOpenSettings: onOpenSettings,
@@ -156,6 +181,7 @@ struct NotchIslandView: View {
                     .padding(.horizontal, earRadius)
                 }
                 .clipShape(shape)
+                .preferredColorScheme(surface.isLight ? .light : .dark)
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             } else {
                 // Collapsed ears hugging left & right of the physical camera notch (Scheme 1)
@@ -188,16 +214,23 @@ struct NotchIslandView: View {
 
     private var floatingPillBody: some View {
         let shape = RoundedRectangle(cornerRadius: isExpanded ? 24 : 17, style: .continuous)
+        let useLight = isExpanded && surface.isLight
         return ZStack(alignment: .top) {
             ZStack {
-                LiquidGlassBackdrop(material: .hudWindow)
-                LumiPalette.shellTop.opacity(isExpanded ? 0.90 : 0.86)
+                LiquidGlassBackdrop(material: useLight ? .popover : .hudWindow, isLight: useLight)
+                if useLight {
+                    LinearGradient(colors: [surface.shellTop, surface.shellBottom], startPoint: .top, endPoint: .bottom)
+                } else {
+                    LumiPalette.shellTop.opacity(isExpanded ? 0.90 : 0.86)
+                }
             }
             .clipShape(shape)
             .overlay(
                 shape.strokeBorder(
                     LinearGradient(
-                        colors: [LumiPalette.champagneRim.opacity(0.20), Color.white.opacity(0.05), LumiPalette.emberGold.opacity(0.12)],
+                        colors: useLight
+                            ? surface.rimColors
+                            : [LumiPalette.champagneRim.opacity(0.20), Color.white.opacity(0.05), LumiPalette.emberGold.opacity(0.12)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
@@ -209,6 +242,7 @@ struct NotchIslandView: View {
                 StudioBentoBoardView(
                     store: store,
                     inNotch: true,
+                    surface: surface,
                     lookOffset: lookOffset,
                     onSwitchMode: onPopOutFloating,
                     onOpenSettings: onOpenSettings,
@@ -216,6 +250,7 @@ struct NotchIslandView: View {
                     onDidJump: onCollapseAfterJump
                 )
                 .padding(.top, 6)
+                .preferredColorScheme(useLight ? .light : .dark)
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             } else {
                 HStack(spacing: 7) {

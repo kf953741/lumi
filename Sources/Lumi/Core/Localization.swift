@@ -194,6 +194,8 @@ public struct L10n: Sendable {
 
     public var menuSwitchToFloating: String { isEnglish ? "Switch to Floating Board" : "切换为桌面悬浮看板" }
     public var menuSwitchToNotch: String { isEnglish ? "Dock to Dynamic Notch" : "切换为刘海灵动岛" }
+    public var menuSwitchToLight: String { isEnglish ? "Theme: Morning Oat Light" : "切换为晨光燕麦浅色" }
+    public var menuSwitchToDark: String { isEnglish ? "Theme: Warm Charcoal Dark" : "切换为暖炭壁炉深色" }
     public var menuMarkAllRead: String { isEnglish ? "Mark All as Read" : "全部标为已读" }
     public var menuDNDTitle: String { isEnglish ? "Do Not Disturb" : "勿扰静音" }
     public var menuDND30m: String { isEnglish ? "Mute for 30 Minutes" : "静音 30 分钟" }
@@ -236,7 +238,7 @@ public struct L10n: Sendable {
     public var lblTargetScreen: String { isEnglish ? "Notch Screen" : "灵动岛显示屏幕" }
     public var lblAutoScreen: String { isEnglish ? "Auto (Prefer MacBook Notch Display)" : "自动（优先 MacBook 刘海屏）" }
     public var lblAlwaysOnTop: String { isEnglish ? "Keep floating board on top across Spaces" : "悬浮看板始终置顶（跨桌面 Space 跟随）" }
-    public var lblFloatingAppearance: String { isEnglish ? "Floating Board Theme" : "悬浮看板外观" }
+    public var lblFloatingAppearance: String { isEnglish ? "Panel Theme" : "面板外观主题" }
 
     public var secBehavior: String { isEnglish ? "Language, Hotkey & Startup" : "语言、快捷键与启动" }
     public var lblLanguage: String { isEnglish ? "Interface Language" : "界面语言" }

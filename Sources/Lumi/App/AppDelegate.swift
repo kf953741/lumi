@@ -277,6 +277,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         modeItem.target = self
         menu.addItem(modeItem)
 
+        let themeTitle = store.floatingAppearance == .oatLight ? t.menuSwitchToDark : t.menuSwitchToLight
+        let themeItem = NSMenuItem(title: themeTitle, action: #selector(menuToggleAppearance), keyEquivalent: "")
+        themeItem.target = self
+        menu.addItem(themeItem)
+
         let readItem = NSMenuItem(title: t.menuMarkAllRead, action: #selector(menuMarkAllRead), keyEquivalent: "")
         readItem.target = self
         menu.addItem(readItem)
@@ -333,6 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc private func menuSwitchMode() {
         switchMode(store.displayMode == .notch ? .floating : .notch)
+    }
+    @objc private func menuToggleAppearance() {
+        store.floatingAppearance = (store.floatingAppearance == .oatLight) ? .charcoal : .oatLight
     }
     @objc private func menuMarkAllRead() { store.markAllRead() }
     @objc private func menuDND30m() { store.enableDND(minutes: 30) }
