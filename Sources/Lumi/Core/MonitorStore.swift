@@ -311,6 +311,46 @@ final class MonitorStore: ObservableObject {
         allSessions.contains { !$0.isCLI && $0.status == .error && $0.isUnread }
     }
 
+    /// Up to 2 distinct active/pending AI app kinds shown as stacked mini native icons
+    /// beside Lumi Ember in the collapsed Dynamic Notch left ear (Scheme 1).
+    var collapsedActiveKinds: [AgentKind] {
+        var ordered: [AgentKind] = []
+        let candidates = allSessions.filter { !(hideCLISessions && $0.isCLI) }
+        for s in candidates.filter({ $0.status == .needsInput }).sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            if !ordered.contains(s.kind) { ordered.append(s.kind) }
+        }
+        for s in candidates.filter({ $0.status == .running }).sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            if !ordered.contains(s.kind) { ordered.append(s.kind) }
+        }
+        for s in candidates.filter({ !$0.isCLI && ($0.status == .done || $0.status == .error) && $0.isUnread })
+            .sorted(by: { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }) {
+            if !ordered.contains(s.kind) { ordered.append(s.kind) }
+        }
+        return Array(ordered.prefix(2))
+    }
+
+    /// When exactly 1 task is running (and nothing else is blocked or unread),
+    /// the collapsed Notch right ear displays its live MM:SS elapsed timer directly.
+    var singleRunningSession: AgentSession? {
+        guard totalNeedsInputCount == 0, totalRunningCount == 1, totalUnreadCount == 0 else { return nil }
+        return allSessions.first { !(hideCLISessions && $0.isCLI) && $0.status == .running }
+    }
+
+    var collapsedLeftEarWidth: CGFloat {
+        let count = collapsedActiveKinds.count
+        if count >= 2 { return 68 }
+        if count == 1 { return 58 }
+        return 40
+    }
+
+    var collapsedRightEarWidth: CGFloat {
+        if totalNeedsInputCount > 0 { return 64 }
+        if singleRunningSession != nil { return 68 }
+        if totalRunningCount > 0 && totalUnreadCount > 0 { return 68 }
+        if totalRunningCount > 0 || totalUnreadCount > 0 { return 48 }
+        return 26
+    }
+
     var mascotMood: MascotMood {
         let now = Date()
         if dizzyUntil > now { return .dizzy }

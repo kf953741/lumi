@@ -86,56 +86,176 @@ struct LumiMascotView: View {
         }
     }
 
-    // MARK: - 1. Compact 22px Hardware Notch Pose (Ultra-Bold Asymmetric Goofy Bean)
+    // MARK: - 1. Compact 24px Hardware Notch Pose (6 High-Contrast Expressive Micro-States!)
 
     private func drawCompactNotchEmber(in ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat, s: CGFloat, time t: TimeInterval) {
-        let bob: CGFloat
+        let gx = max(-1, min(1, lookOffset.width)) * s * 0.03
+        let gy = max(-1, min(1, lookOffset.height)) * s * 0.03
+
         switch mood {
-        case .celebrating, .poked: bob = -CGFloat(abs(Foundation.sin(t * 7.5))) * s * 0.09
-        case .needsInput:          bob = -CGFloat(abs(Foundation.sin(t * 5.2))) * s * 0.07
-        case .working:             bob = CGFloat(Foundation.sin(t * 4.5)) * s * 0.04
-        case .sleeping:            bob = CGFloat(Foundation.sin(t * 1.4)) * s * 0.025
-        default:                   bob = CGFloat(Foundation.sin(t * 2.8)) * s * 0.03
-        }
+        case .sleeping:
+            // Slumped wide puddle bean, softly dimmed to cozy night-lamp brightness + clear floating zZ
+            let bob = CGFloat(Foundation.sin(t * 1.4)) * s * 0.02
+            let bw = s * 0.88
+            let bh = s * 0.62
+            let r = CGRect(x: cx - bw * 0.5 - s * 0.04, y: cy + bob - bh * 0.5 + s * 0.12, width: bw, height: bh)
+            var sleepCtx = ctx
+            sleepCtx.opacity = 0.78
+            fillBean(in: &sleepCtx, path: makeSleepingBeanPath(in: r), rect: r)
 
-        let bw = s * 0.86
-        let bh = (mood == .sleeping) ? s * 0.70 : s * 0.86
-        let origin = CGPoint(x: cx - bw * 0.5, y: cy + bob - bh * 0.5 + (mood == .sleeping ? s * 0.06 : 0))
-        let body = makeUprightBeanPath(in: CGRect(origin: origin, size: CGSize(width: bw, height: bh)))
-        fillBean(in: &ctx, path: body, rect: CGRect(origin: origin, size: CGSize(width: bw, height: bh)))
+            let lC = CGPoint(x: r.minX + bw * 0.34, y: r.minY + bh * 0.52)
+            let rC = CGPoint(x: r.minX + bw * 0.66, y: r.minY + bh * 0.56)
+            for (c, rad) in [(lC, bw * 0.12), (rC, bw * 0.14)] {
+                var lid = Path()
+                lid.move(to: CGPoint(x: c.x - rad, y: c.y))
+                lid.addQuadCurve(to: CGPoint(x: c.x + rad, y: c.y), control: CGPoint(x: c.x, y: c.y + rad * 0.75))
+                sleepCtx.stroke(lid, with: .color(inkColor), style: StrokeStyle(lineWidth: max(1.3, s * 0.068), lineCap: .round))
+            }
 
-        // Signature oversized asymmetric white eyes so it reads effortlessly at 22px!
-        let r = CGRect(origin: origin, size: CGSize(width: bw, height: bh))
-        let lCenter = CGPoint(x: r.minX + bw * 0.34, y: r.minY + bh * 0.46)
-        let rCenter = CGPoint(x: r.minX + bw * 0.69, y: r.minY + bh * 0.40)
-        let lDia = bw * 0.27
-        let rDia = bw * 0.32
+            let zLift = CGFloat(Foundation.sin(t * 1.6)) * s * 0.03
+            let z1 = Text("z").font(.system(size: max(6.5, s * 0.28), weight: .heavy, design: .rounded)).foregroundColor(Color(red: 0.85, green: 0.80, blue: 0.74).opacity(0.85))
+            let z2 = Text("Z").font(.system(size: max(8.0, s * 0.34), weight: .black, design: .rounded)).foregroundColor(Color(red: 0.94, green: 0.88, blue: 0.80).opacity(0.92))
+            ctx.draw(z1, at: CGPoint(x: r.maxX - s * 0.12, y: r.minY - s * 0.02 - zLift))
+            ctx.draw(z2, at: CGPoint(x: r.maxX + s * 0.06, y: r.minY - s * 0.18 + zLift * 0.7))
 
-        let gx = max(-1, min(1, lookOffset.width)) * bw * 0.035
-        let gy = max(-1, min(1, lookOffset.height)) * bh * 0.035
+        case .working:
+            // Leaning-forward horizontal coding bean + half-hooded D-shape squint eyes + sharp V-brows
+            let beat = CGFloat(Foundation.sin(t * 5.0)) * s * 0.035
+            let bw = s * 0.92
+            let bh = s * 0.74
+            let r = CGRect(x: cx - bw * 0.5, y: cy + beat - bh * 0.5 + s * 0.04, width: bw, height: bh)
+            fillBean(in: &ctx, path: makeWorkingBeanPath(in: r), rect: r)
 
-        if mood == .sleeping {
-            drawDroopyEye(in: &ctx, center: lCenter, diameter: lDia, lidFraction: 0.62, tiltDeg: -6)
-            drawDroopyEye(in: &ctx, center: rCenter, diameter: rDia, lidFraction: 0.62, tiltDeg: -6)
-        } else if mood == .celebrating || mood == .poked {
-            drawCheekSquishedEye(in: &ctx, center: lCenter, diameter: lDia, pupilOffset: CGPoint(x: lDia * 0.08, y: lDia * 0.06))
-            drawCheekSquishedEye(in: &ctx, center: rCenter, diameter: rDia, pupilOffset: CGPoint(x: -rDia * 0.08, y: rDia * 0.06))
-        } else {
+            let lC = CGPoint(x: r.minX + bw * 0.37, y: r.minY + bh * 0.50)
+            let rC = CGPoint(x: r.minX + bw * 0.72, y: r.minY + bh * 0.45)
+            let lD = bw * 0.27
+            let rD = bw * 0.31
+
+            for (center, dia) in [(lC, lD), (rC, rD)] {
+                var eyeCtx = ctx
+                let clipRect = CGRect(x: center.x - dia * 0.55, y: center.y - dia * 0.12, width: dia * 1.10, height: dia * 0.72)
+                eyeCtx.clip(to: Path(clipRect))
+                eyeCtx.fill(Path(ellipseIn: CGRect(x: center.x - dia * 0.5, y: center.y - dia * 0.5, width: dia, height: dia)), with: .color(scleraColor))
+                let pd = dia * 0.48
+                eyeCtx.fill(Path(ellipseIn: CGRect(x: center.x + dia * 0.16 + gx * 0.5 - pd * 0.5, y: center.y + dia * 0.04 + gy * 0.5 - pd * 0.5, width: pd, height: pd)), with: .color(inkColor))
+            }
+
+            let browW = max(1.4, s * 0.068)
+            var lb = Path()
+            lb.move(to: CGPoint(x: lC.x - lD * 0.52, y: lC.y - lD * 0.34))
+            lb.addLine(to: CGPoint(x: lC.x + lD * 0.42, y: lC.y - lD * 0.08))
+            ctx.stroke(lb, with: .color(inkColor), style: StrokeStyle(lineWidth: browW, lineCap: .round))
+
+            var rb = Path()
+            rb.move(to: CGPoint(x: rC.x - rD * 0.46, y: rC.y - rD * 0.08))
+            rb.addLine(to: CGPoint(x: rC.x + rD * 0.46, y: rC.y - rD * 0.32))
+            ctx.stroke(rb, with: .color(inkColor), style: StrokeStyle(lineWidth: browW, lineCap: .round))
+
+        case .needsInput:
+            // Eager bouncing bean + wide staring eyes + bold black-ringed amber `?` pill
+            let hop = -CGFloat(abs(Foundation.sin(t * 5.2))) * s * 0.07
+            let bw = s * 0.80
+            let bh = s * 0.84
+            let r = CGRect(x: cx - bw * 0.5 - s * 0.06, y: cy + hop - bh * 0.5, width: bw, height: bh)
+            fillBean(in: &ctx, path: makeUprightBeanPath(in: r), rect: r)
+
+            let lC = CGPoint(x: r.minX + bw * 0.34, y: r.minY + bh * 0.45)
+            let rC = CGPoint(x: r.minX + bw * 0.68, y: r.minY + bh * 0.39)
+            drawSimpleAsymEye(in: &ctx, center: lC, diameter: bw * 0.29, pupilOffset: CGPoint(x: gx, y: gy), blinking: false)
+            drawSimpleAsymEye(in: &ctx, center: rC, diameter: bw * 0.34, pupilOffset: CGPoint(x: gx, y: gy), blinking: false)
+
+            ctx.fill(Path(ellipseIn: CGRect(x: r.minX + bw * 0.44, y: r.minY + bh * 0.66, width: bw * 0.14, height: bh * 0.14)), with: .color(cavityColor))
+
+            let qBadge = CGRect(x: r.maxX - s * 0.14, y: r.minY - s * 0.10, width: s * 0.38, height: s * 0.38)
+            ctx.fill(Path(ellipseIn: qBadge), with: .color(Color(red: 1.0, green: 0.64, blue: 0.24)))
+            ctx.stroke(Path(ellipseIn: qBadge), with: .color(Color.black), lineWidth: 1.2)
+            let qTxt = Text("?").font(.system(size: max(7.5, s * 0.28), weight: .black, design: .rounded)).foregroundColor(Color(red: 0.12, green: 0.08, blue: 0.06))
+            ctx.draw(qTxt, at: CGPoint(x: qBadge.midX, y: qBadge.midY))
+
+        case .celebrating, .poked:
+            // Joyful leaping bean + happy ^ ^ crescent eyes + big open grin + 3 bright confetti sparks
+            let hop = -CGFloat(abs(Foundation.sin(t * 7.5))) * s * 0.08
+            let bw = s * 0.80
+            let bh = s * 0.82
+            let r = CGRect(x: cx - bw * 0.5, y: cy + hop - bh * 0.5 - s * 0.02, width: bw, height: bh)
+            fillBean(in: &ctx, path: makeUprightBeanPath(in: r), rect: r)
+
+            let lC = CGPoint(x: r.minX + bw * 0.33, y: r.minY + bh * 0.42)
+            let rC = CGPoint(x: r.minX + bw * 0.68, y: r.minY + bh * 0.37)
+            for (c, rad) in [(lC, bw * 0.12), (rC, bw * 0.14)] {
+                var arc = Path()
+                arc.move(to: CGPoint(x: c.x - rad, y: c.y + rad * 0.25))
+                arc.addQuadCurve(to: CGPoint(x: c.x + rad, y: c.y + rad * 0.25), control: CGPoint(x: c.x, y: c.y - rad * 0.85))
+                ctx.stroke(arc, with: .color(inkColor), style: StrokeStyle(lineWidth: max(1.5, s * 0.075), lineCap: .round))
+            }
+
+            var grin = Path()
+            grin.move(to: CGPoint(x: r.minX + bw * 0.30, y: r.minY + bh * 0.57))
+            grin.addLine(to: CGPoint(x: r.minX + bw * 0.72, y: r.minY + bh * 0.54))
+            grin.addQuadCurve(to: CGPoint(x: r.minX + bw * 0.30, y: r.minY + bh * 0.57), control: CGPoint(x: r.minX + bw * 0.52, y: r.minY + bh * 0.88))
+            grin.closeSubpath()
+            ctx.fill(grin, with: .color(cavityColor))
+
+            ctx.fill(Path(ellipseIn: CGRect(x: r.minX - s * 0.08, y: r.minY - s * 0.06, width: s * 0.15, height: s * 0.15)), with: .color(Color(red: 1.0, green: 0.84, blue: 0.32)))
+            ctx.fill(Path(ellipseIn: CGRect(x: r.maxX - s * 0.02, y: r.minY - s * 0.08, width: s * 0.16, height: s * 0.16)), with: .color(Color(red: 0.38, green: 0.92, blue: 0.72)))
+            ctx.fill(Path(ellipseIn: CGRect(x: r.maxX + s * 0.02, y: r.minY + bh * 0.36, width: s * 0.13, height: s * 0.13)), with: .color(Color(red: 1.0, green: 0.56, blue: 0.68)))
+
+        case .error:
+            // Startled pinprick eyes + coral `!` alert badge
+            let shake = CGFloat(Foundation.sin(t * 22.0)) * s * 0.025
+            let bw = s * 0.80
+            let bh = s * 0.84
+            let r = CGRect(x: cx + shake - bw * 0.5 - s * 0.06, y: cy - bh * 0.5, width: bw, height: bh)
+            fillBean(in: &ctx, path: makeUprightBeanPath(in: r), rect: r)
+
+            let lC = CGPoint(x: r.minX + bw * 0.34, y: r.minY + bh * 0.45)
+            let rC = CGPoint(x: r.minX + bw * 0.68, y: r.minY + bh * 0.39)
+            for (center, dia) in [(lC, bw * 0.29), (rC, bw * 0.35)] {
+                ctx.fill(Path(ellipseIn: CGRect(x: center.x - dia * 0.5, y: center.y - dia * 0.5, width: dia, height: dia)), with: .color(scleraColor))
+                let pd = dia * 0.34
+                ctx.fill(Path(ellipseIn: CGRect(x: center.x - pd * 0.5, y: center.y - pd * 0.5, width: pd, height: pd)), with: .color(inkColor))
+            }
+
+            let badge = CGRect(x: r.maxX - s * 0.14, y: r.minY - s * 0.10, width: s * 0.38, height: s * 0.38)
+            ctx.fill(Path(ellipseIn: badge), with: .color(Color(red: 0.98, green: 0.36, blue: 0.34)))
+            ctx.stroke(Path(ellipseIn: badge), with: .color(Color.black), lineWidth: 1.2)
+            let bang = Text("!").font(.system(size: max(7.5, s * 0.28), weight: .black, design: .rounded)).foregroundColor(.white)
+            ctx.draw(bang, at: CGPoint(x: badge.midX, y: badge.midY))
+
+        default:
+            // WaitingUnread / Dizzy: bright asymmetric bean + golden 4-point sparkle ✦
+            let bob = CGFloat(Foundation.sin(t * 2.8)) * s * 0.025
+            let bw = s * 0.82
+            let bh = s * 0.84
+            let r = CGRect(x: cx - bw * 0.5 - s * 0.04, y: cy + bob - bh * 0.5 + s * 0.02, width: bw, height: bh)
+            fillBean(in: &ctx, path: makeUprightBeanPath(in: r), rect: r)
+
+            let lC = CGPoint(x: r.minX + bw * 0.34, y: r.minY + bh * 0.46)
+            let rC = CGPoint(x: r.minX + bw * 0.69, y: r.minY + bh * 0.40)
             let cycle = t.truncatingRemainder(dividingBy: 3.8)
             let blinking = cycle > 3.66
-            drawSimpleAsymEye(in: &ctx, center: lCenter, diameter: lDia, pupilOffset: CGPoint(x: lDia * 0.14 + gx, y: gy), blinking: blinking)
-            drawSimpleAsymEye(in: &ctx, center: rCenter, diameter: rDia, pupilOffset: CGPoint(x: -rDia * 0.12 + gx, y: rDia * 0.05 + gy), blinking: blinking)
-        }
+            drawSimpleAsymEye(in: &ctx, center: lC, diameter: bw * 0.28, pupilOffset: CGPoint(x: bw * 0.04 + gx, y: gy), blinking: blinking)
+            drawSimpleAsymEye(in: &ctx, center: rC, diameter: bw * 0.33, pupilOffset: CGPoint(x: -bw * 0.04 + gx, y: bw * 0.01 + gy), blinking: blinking)
 
-        if mood == .waitingUnread || mood == .celebrating || mood == .needsInput {
-            let dotR = s * 0.13
-            let badgeColor = mood == .needsInput
-                ? Color(red: 1.0, green: 0.46, blue: 0.30)
-                : Color(red: 1.0, green: 0.82, blue: 0.30)
-            ctx.fill(
-                Path(ellipseIn: CGRect(x: r.maxX - dotR * 0.85, y: r.minY - dotR * 0.35, width: dotR * 1.7, height: dotR * 1.7)),
-                with: .color(badgeColor)
-            )
+            var smile = Path()
+            smile.move(to: CGPoint(x: r.minX + bw * 0.40, y: r.minY + bh * 0.70))
+            smile.addQuadCurve(to: CGPoint(x: r.minX + bw * 0.61, y: r.minY + bh * 0.67), control: CGPoint(x: r.minX + bw * 0.51, y: r.minY + bh * 0.80))
+            ctx.stroke(smile, with: .color(inkColor), style: StrokeStyle(lineWidth: max(1.2, s * 0.058), lineCap: .round))
+
+            if mood == .waitingUnread {
+                let pulse = CGFloat(0.88 + 0.16 * Foundation.sin(t * 3.8))
+                let sx = r.maxX + s * 0.02
+                let sy = r.minY + s * 0.04
+                let sr = s * 0.21 * pulse
+                var star = Path()
+                star.move(to: CGPoint(x: sx, y: sy - sr))
+                star.addQuadCurve(to: CGPoint(x: sx + sr, y: sy), control: CGPoint(x: sx + sr * 0.16, y: sy - sr * 0.16))
+                star.addQuadCurve(to: CGPoint(x: sx, y: sy + sr), control: CGPoint(x: sx + sr * 0.16, y: sy + sr * 0.16))
+                star.addQuadCurve(to: CGPoint(x: sx - sr, y: sy), control: CGPoint(x: sx - sr * 0.16, y: sy + sr * 0.16))
+                star.addQuadCurve(to: CGPoint(x: sx, y: sy - sr), control: CGPoint(x: sx - sr * 0.16, y: sy - sr * 0.16))
+                star.closeSubpath()
+                ctx.fill(star, with: .color(Color(red: 1.0, green: 0.84, blue: 0.36)))
+            }
         }
     }
 

@@ -113,4 +113,11 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertFalse(UpdateChecker.isNewer("v1.3.0", than: "1.3.0"))
         XCTAssertFalse(UpdateChecker.isNewer("v1.2.9", than: "1.3.0"))
     }
+
+    func testFormatMMSSFormatsTabularElapsedDuration() {
+        XCTAssertEqual(ProjectNameHelper.formatMMSS(0), "00:00")
+        XCTAssertEqual(ProjectNameHelper.formatMMSS(9), "00:09")
+        XCTAssertEqual(ProjectNameHelper.formatMMSS(134), "02:14")
+        XCTAssertEqual(ProjectNameHelper.formatMMSS(3903), "1h05")
+    }
 }

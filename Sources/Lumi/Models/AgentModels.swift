@@ -398,6 +398,16 @@ public enum ProjectNameHelper {
         return String(format: "%dh%02dm", hours, remMins)
     }
 
+    public static func formatMMSS(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        let mins = total / 60
+        let secs = total % 60
+        if mins < 60 { return String(format: "%02d:%02d", mins, secs) }
+        let hours = mins / 60
+        let remMins = mins % 60
+        return String(format: "%dh%02d", hours, remMins)
+    }
+
     public static func formatClock(_ date: Date) -> String {
         let fmt = DateFormatter()
         fmt.dateFormat = "HH:mm"

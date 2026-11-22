@@ -158,28 +158,21 @@ struct NotchIslandView: View {
                 .clipShape(shape)
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             } else {
-                // Collapsed ears hugging left & right of the physical camera notch
+                // Collapsed ears hugging left & right of the physical camera notch (Scheme 1)
                 shape
                     .fill(Color.black)
 
                 HStack(spacing: 0) {
                     Spacer().frame(width: earRadius)
 
-                    LumiMascotView(
-                        mood: store.mascotMood,
-                        theme: store.mascotTheme,
-                        size: min(24, max(20, hardwareNotchHeight - 8)),
-                        lookOffset: lookOffset,
-                        isCompact: true,
-                        isActiveSurface: false
-                    )
-                    .frame(width: 44, height: hardwareNotchHeight)
+                    collapsedLeftEar
+                        .frame(width: store.collapsedLeftEarWidth, height: hardwareNotchHeight)
 
                     Spacer()
                         .frame(width: hardwareNotchWidth)
 
                     compactStatusBadge
-                        .frame(width: 58, height: hardwareNotchHeight)
+                        .frame(width: store.collapsedRightEarWidth, height: hardwareNotchHeight)
 
                     Spacer().frame(width: earRadius)
                 }
@@ -225,7 +218,7 @@ struct NotchIslandView: View {
                 .padding(.top, 6)
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: 7) {
                     LumiMascotView(
                         mood: store.mascotMood,
                         theme: store.mascotTheme,
@@ -234,6 +227,9 @@ struct NotchIslandView: View {
                         isCompact: true,
                         isActiveSurface: false
                     )
+                    if !store.collapsedActiveKinds.isEmpty {
+                        stackedMiniAppIcons(kinds: store.collapsedActiveKinds)
+                    }
                     Text(compactHeadline)
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundColor(.white.opacity(0.94))
@@ -258,48 +254,92 @@ struct NotchIslandView: View {
         )
     }
 
+    private var collapsedLeftEar: some View {
+        let activeKinds = store.collapsedActiveKinds
+        return HStack(spacing: 4) {
+            LumiMascotView(
+                mood: store.mascotMood,
+                theme: store.mascotTheme,
+                size: min(24, max(20, hardwareNotchHeight - 8)),
+                lookOffset: lookOffset,
+                isCompact: true,
+                isActiveSurface: false
+            )
+            if !activeKinds.isEmpty {
+                stackedMiniAppIcons(kinds: activeKinds)
+            }
+        }
+    }
+
+    private func stackedMiniAppIcons(kinds: [AgentKind]) -> some View {
+        ZStack(alignment: .leading) {
+            ForEach(Array(kinds.enumerated()), id: \.offset) { idx, kind in
+                NativeAgentIconView(kind: kind, visualSize: 15.5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(Color.black, lineWidth: idx > 0 ? 1.3 : 0)
+                    )
+                    .offset(x: CGFloat(idx) * 10.0)
+            }
+        }
+        .frame(width: kinds.count >= 2 ? 26 : 16, height: 18, alignment: .leading)
+    }
+
     private var compactStatusBadge: some View {
         HStack(spacing: 5) {
             if store.totalNeedsInputCount > 0 {
-                HStack(spacing: 2) {
-                    Image(systemName: "questionmark.circle.fill")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(LumiPalette.needsAmber)
-                    Text("\(store.totalNeedsInputCount)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(LumiPalette.emberGold)
-                }
-            }
-            if store.totalRunningCount > 0 {
                 HStack(spacing: 3) {
-                    TelemetryPulseBars(active: true, color: LumiPalette.runningIvory)
-                    Text("\(store.totalRunningCount)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(LumiPalette.warmPrimary)
-                }
-            }
-            if store.totalUnreadCount > 0 {
-                HStack(spacing: 2) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(LumiPalette.emberOrange)
-                    Text("\(store.totalUnreadCount)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .monospacedDigit()
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(LumiPalette.needsAmber)
+                    Text(store.isEnglish ? "Reply" : "确认")
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(LumiPalette.emberGold)
                 }
-            }
-            if store.totalRunningCount == 0 && store.totalUnreadCount == 0 && store.totalNeedsInputCount == 0 {
-                if store.isDNDActive {
-                    Image(systemName: "moon.zzz.fill")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(LumiPalette.warmSecondary)
-                } else {
-                    Circle()
-                        .fill(Color.white.opacity(0.28))
-                        .frame(width: 6, height: 6)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Capsule().fill(LumiPalette.needsAmber.opacity(0.18)))
+            } else if let solo = store.singleRunningSession {
+                // Single active task -> show live tabular MM:SS elapsed timer directly!
+                let elapsed = max(0, store.lastRefreshAt.timeIntervalSince(solo.startedAt ?? solo.updatedAt))
+                HStack(spacing: 4) {
+                    TelemetryPulseBars(active: true, color: LumiPalette.emberGold)
+                    Text(ProjectNameHelper.formatMMSS(elapsed))
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundColor(LumiPalette.warmPrimary.opacity(0.95))
+                }
+            } else {
+                if store.totalRunningCount > 0 {
+                    HStack(spacing: 3) {
+                        TelemetryPulseBars(active: true, color: LumiPalette.runningIvory)
+                        Text("\(store.totalRunningCount)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundColor(LumiPalette.warmPrimary)
+                    }
+                }
+                if store.totalUnreadCount > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(LumiPalette.emberOrange)
+                        Text("\(store.totalUnreadCount)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundColor(LumiPalette.emberGold)
+                    }
+                }
+                if store.totalRunningCount == 0 && store.totalUnreadCount == 0 {
+                    if store.isDNDActive {
+                        Image(systemName: "moon.zzz.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(LumiPalette.warmSecondary)
+                    } else {
+                        Circle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 4.5, height: 4.5)
+                    }
                 }
             }
         }

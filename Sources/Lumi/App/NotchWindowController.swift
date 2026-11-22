@@ -155,12 +155,28 @@ final class NotchWindowController: ObservableObject {
         return false
     }
 
+    private var notchLeftOffsetFromMid: CGFloat = 0
+
     func recomputeScreenGeometry(animated: Bool = true) {
         guard let screen = targetScreen() else { return }
         detectNotch(on: screen)
         let frame = targetFrame(on: screen, expanded: isExpanded)
         panel.hasShadow = false
         panel.setFrame(frame, display: true, animate: animated)
+    }
+
+    /// Smoothly adapts collapsed notch ear / floating pill widths when active/idle states change,
+    /// keeping the center gap locked pixel-exact to the physical MacBook camera notch.
+    func updateCollapsedGeometryIfNeeded() {
+        guard !isExpanded, panel.isVisible, let screen = targetScreen() else { return }
+        let desired = targetFrame(on: screen, expanded: false)
+        if abs(panel.frame.width - desired.width) > 0.5 || abs(panel.frame.minX - desired.minX) > 0.5 {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.24
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(desired, display: true)
+            }
+        }
     }
 
     // MARK: - Private Setup
@@ -285,6 +301,7 @@ final class NotchWindowController: ObservableObject {
             if gap > 60 {
                 hasHardwareNotch = true
                 notchWidth = gap
+                notchLeftOffsetFromMid = left.maxX - screen.frame.midX
                 let topInset = screen.safeAreaInsets.top
                 let menuH = screen.frame.maxY - screen.visibleFrame.maxY
                 notchHeight = topInset > 0 ? topInset : max(30, min(42, menuH > 0 ? menuH : 32))
@@ -294,6 +311,7 @@ final class NotchWindowController: ObservableObject {
         hasHardwareNotch = false
         notchWidth = 180
         notchHeight = 34
+        notchLeftOffsetFromMid = -90
     }
 
     private func targetFrame(on screen: NSScreen, expanded: Bool) -> NSRect {
@@ -306,13 +324,17 @@ final class NotchWindowController: ObservableObject {
             return NSRect(x: round(x), y: round(y), width: w, height: h)
         } else {
             if hasHardwareNotch {
-                let w = notchWidth + 44 + 58 + 20
+                let earR: CGFloat = 10
+                let leftW = store.collapsedLeftEarWidth
+                let rightW = store.collapsedRightEarWidth
+                let notchLeftX = sf.midX + notchLeftOffsetFromMid
+                let w = earR + leftW + notchWidth + rightW + earR
                 let h = notchHeight
-                let x = sf.midX - w * 0.5
+                let x = notchLeftX - earR - leftW
                 let y = sf.maxY - h
-                return NSRect(x: round(x), y: round(y), width: w, height: h)
+                return NSRect(x: round(x), y: round(y), width: round(w), height: h)
             } else {
-                let w: CGFloat = 232
+                let w: CGFloat = store.collapsedActiveKinds.isEmpty ? 216 : 246
                 let h: CGFloat = 34
                 let x = sf.midX - w * 0.5
                 let y = sf.maxY - h - 6

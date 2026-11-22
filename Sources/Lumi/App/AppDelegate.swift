@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         store.onCountsChanged = { [weak self] running, unread, needsInput, _ in
             self?.updateStatusItem(running: running, unread: unread, needsInput: needsInput)
+            self?.notchController.updateCollapsedGeometryIfNeeded()
         }
         store.onCompletionMoment = { [weak self] in
             guard let self, self.store.displayMode == .notch else { return }
