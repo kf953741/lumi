@@ -51,8 +51,61 @@ final class MonitorStore: ObservableObject {
     @Published var autoJumpAntigravity: Bool {
         didSet { UserDefaults.standard.set(autoJumpAntigravity, forKey: "autoJumpAntigravity") }
     }
+    @Published var appLanguage: AppLanguage {
+        didSet {
+            UserDefaults.standard.set(appLanguage.rawValue, forKey: "appLanguage")
+            onLanguageChanged?()
+            notifyCounts()
+        }
+    }
+    @Published var floatingAppearance: FloatingAppearance {
+        didSet { UserDefaults.standard.set(floatingAppearance.rawValue, forKey: "floatingAppearance") }
+    }
+    @Published var hideAutoPeekInFullscreen: Bool {
+        didSet { UserDefaults.standard.set(hideAutoPeekInFullscreen, forKey: "hideAutoPeekInFullscreen") }
+    }
+    @Published var hotKeyPreset: GlobalHotKeyPreset {
+        didSet {
+            UserDefaults.standard.set(hotKeyPreset.rawValue, forKey: "hotKeyPreset")
+            onHotKeyPresetChanged?(hotKeyPreset)
+        }
+    }
+    @Published var dndUntil: Date? {
+        didSet {
+            if let d = dndUntil {
+                UserDefaults.standard.set(d.timeIntervalSince1970, forKey: "dndUntil")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "dndUntil")
+            }
+            notifyCounts()
+        }
+    }
     @Published var accessibilityGranted: Bool = AXIsProcessTrusted()
     @Published var jumpHintMessage: String? = nil
+
+    var isEnglish: Bool { appLanguage.resolvedIsEnglish }
+    var l10n: L10n { L10n(isEnglish: isEnglish) }
+
+    var isDNDActive: Bool {
+        guard let until = dndUntil else { return false }
+        return until > Date()
+    }
+
+    var dndRemainingText: String? {
+        guard let until = dndUntil else { return nil }
+        let rem = until.timeIntervalSinceNow
+        guard rem > 5 else { return nil }
+        let mins = max(1, Int(ceil(rem / 60.0)))
+        return isEnglish ? "\(mins)m" : "\(mins) 分钟"
+    }
+
+    func enableDND(minutes: Int) {
+        dndUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
+    }
+
+    func disableDND() {
+        dndUntil = nil
+    }
 
     @Published var lastRefreshAt: Date = Date()
     @Published var hookStatus: [AgentKind: Bool] = [:]
@@ -68,7 +121,9 @@ final class MonitorStore: ObservableObject {
     var onDisplayModeChanged: ((DisplayMode) -> Void)?
     var onWindowLevelChanged: ((Bool) -> Void)?
     var onScreenChanged: (() -> Void)?
-    var onCountsChanged: ((Int, Int, MascotMood) -> Void)?
+    var onLanguageChanged: (() -> Void)?
+    var onHotKeyPresetChanged: ((GlobalHotKeyPreset) -> Void)?
+    var onCountsChanged: ((Int, Int, Int, MascotMood) -> Void)?
     var onCompletionMoment: (() -> Void)?
 
     private let agyScanner = AntigravityScanner()
@@ -92,6 +147,7 @@ final class MonitorStore: ObservableObject {
     /// a session must stay continuously finished for 4.5s before popping a completion alert.
     private var pendingFinishSince: [String: Date] = [:]
     private var notifiedCompletedAt: [String: TimeInterval] = [:]
+    private var notifiedNeedsInputAt: [String: TimeInterval] = [:]
     private let completionDebounceSeconds: TimeInterval = 4.5
     private var didInitialScan = false
     private let launchTime = Date()
@@ -108,7 +164,11 @@ final class MonitorStore: ObservableObject {
             "hideCLISessions": true,
             "selectedSound": "Glass",
             "selectedScreenName": "auto",
-            "autoJumpAntigravity": true
+            "autoJumpAntigravity": true,
+            "appLanguage": AppLanguage.system.rawValue,
+            "floatingAppearance": FloatingAppearance.charcoal.rawValue,
+            "hideAutoPeekInFullscreen": true,
+            "hotKeyPreset": GlobalHotKeyPreset.optionL.rawValue
         ])
         // One-time upgrade migration to the new signature warm tangerine Lumi Ember theme
         if d.integer(forKey: "mascotArtVersion") < 2 {
@@ -126,6 +186,12 @@ final class MonitorStore: ObservableObject {
         self.selectedScreenName = d.string(forKey: "selectedScreenName") ?? "auto"
         self.launchAtLogin = LaunchAgentManager.isEnabled
         self.autoJumpAntigravity = d.bool(forKey: "autoJumpAntigravity")
+        self.appLanguage = AppLanguage(rawValue: d.string(forKey: "appLanguage") ?? "") ?? .system
+        self.floatingAppearance = FloatingAppearance(rawValue: d.string(forKey: "floatingAppearance") ?? "") ?? .charcoal
+        self.hideAutoPeekInFullscreen = d.bool(forKey: "hideAutoPeekInFullscreen")
+        self.hotKeyPreset = GlobalHotKeyPreset(rawValue: d.string(forKey: "hotKeyPreset") ?? "") ?? .optionL
+        let savedDnd = d.double(forKey: "dndUntil")
+        self.dndUntil = savedDnd > Date().timeIntervalSince1970 ? Date(timeIntervalSince1970: savedDnd) : nil
 
         let dir = "\(NSHomeDirectory())/.lumi"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -203,6 +269,12 @@ final class MonitorStore: ObservableObject {
         }
     }
 
+    var needsInputSessions: [AgentSession] {
+        filteredSessions
+            .filter { $0.status == .needsInput }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     var runningSessions: [AgentSession] {
         filteredSessions
             .filter { $0.status == .running }
@@ -217,10 +289,14 @@ final class MonitorStore: ObservableObject {
 
     var recentReadSessions: [AgentSession] {
         filteredSessions
-            .filter { !$0.isCLI && $0.status != .running && !$0.isUnread }
+            .filter { !$0.isCLI && $0.status != .running && $0.status != .needsInput && !$0.isUnread }
             .sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
             .prefix(12)
             .map { $0 }
+    }
+
+    var totalNeedsInputCount: Int {
+        allSessions.filter { !(hideCLISessions && $0.isCLI) && $0.status == .needsInput }.count
     }
 
     var totalRunningCount: Int {
@@ -240,6 +316,7 @@ final class MonitorStore: ObservableObject {
         if dizzyUntil > now { return .dizzy }
         if pokedUntil > now { return .poked }
         if celebratingUntil > now { return .celebrating }
+        if totalNeedsInputCount > 0 { return .needsInput }
         if hasUnreadError { return .error }
         if totalRunningCount > 0 { return .working }
         if totalUnreadCount > 0 { return .waitingUnread }
@@ -248,13 +325,10 @@ final class MonitorStore: ObservableObject {
 
     var mascotStatusText: String {
         switch mascotMood {
-        case .dizzy: return "哎呀，转晕啦 @ @"
-        case .poked: return "嘿嘿，我在盯盘呢~"
-        case .celebrating: return "耶！有对话完成啦！"
-        case .error: return "有对话执行出错了"
-        case .working: return "\(totalRunningCount) 个对话正在干活"
-        case .waitingUnread: return "\(totalUnreadCount) 个对话已完工等你查看"
-        case .sleeping: return "全部空闲，摸鱼打盹中…"
+        case .dizzy, .poked, .celebrating:
+            return l10n.stageCaption(for: mascotMood)
+        default:
+            return l10n.mascotLongStatus(running: totalRunningCount, unread: totalUnreadCount, needsInput: totalNeedsInputCount)
         }
     }
 
@@ -389,7 +463,7 @@ final class MonitorStore: ObservableObject {
             jumpLogger.info("Jumping to Antigravity id=\(session.rawId, privacy: .public) trusted=\(trusted) autoJump=\(self.autoJumpAntigravity) alreadyFront=\(alreadyFront) query=\(queryTitle, privacy: .public)")
 
             if autoJumpAntigravity && !trusted {
-                showJumpHint("未获得辅助功能权限，无法自动切到该对话；请在系统设置中点「-」删掉旧项后重新「+」添加 Lumi")
+                showJumpHint(l10n.accessibilityStaleHintBanner)
                 if !alreadyFront {
                     activateApp(bundleIDs: session.kind.targetBundleIDs)
                 }
@@ -560,13 +634,14 @@ final class MonitorStore: ObservableObject {
         celebratingUntil = Date().addingTimeInterval(3.8)
         if soundEnabled { playSound() }
         onCompletionMoment?()
+        let t = l10n
         postNotification(
             id: "test-\(UUID().uuidString)",
             sessionId: nil,
             deepLink: nil,
-            title: "✅ [Lumi] 提醒测试成功",
-            subtitle: "独立对话完成时会这样提醒你",
-            body: "已完成项会常驻在待查看列表，点完跳过去会自动标为已读。",
+            title: t.testNotifTitle,
+            subtitle: t.testNotifSubtitle,
+            body: t.testNotifBody,
             bundleID: AgentKind.antigravity.targetBundleIDs.first ?? ""
         )
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
@@ -581,7 +656,11 @@ final class MonitorStore: ObservableObject {
         let isFirst = !didInitialScan
         didInitialScan = true
         let now = Date()
+        if let until = dndUntil, until <= now {
+            dndUntil = nil
+        }
         var newlyFinished: [AgentSession] = []
+        var newlyNeedsInput: [AgentSession] = []
         var processed: [AgentSession] = []
         var ackDirty = false
 
@@ -589,7 +668,26 @@ final class MonitorStore: ObservableObject {
             var s = raw
             let prev = previousStatus[s.id]
 
-            if s.status == .running {
+            if s.status == .needsInput {
+                pendingFinishSince.removeValue(forKey: s.id)
+                if liveStartedAt[s.id] == nil {
+                    liveStartedAt[s.id] = s.startedAt ?? now
+                }
+                let updTs = s.updatedAt.timeIntervalSince1970
+                let alreadyAlerted = (notifiedNeedsInputAt[s.id] ?? 0) >= updTs - 2.0
+                if !isFirst && !alreadyAlerted && !(hideCLISessions && s.isCLI) {
+                    notifiedNeedsInputAt[s.id] = updTs
+                    newlyNeedsInput.append(s)
+                }
+                s = AgentSession(
+                    id: s.id, rawId: s.rawId, kind: s.kind, title: s.title,
+                    project: s.project, cwd: s.cwd, isCLI: s.isCLI, status: .needsInput,
+                    currentAction: s.currentAction, detailSummary: s.detailSummary,
+                    startedAt: s.startedAt ?? liveStartedAt[s.id], updatedAt: s.updatedAt,
+                    completedAt: nil, durationSec: nil,
+                    activeSubagents: s.activeSubagents, isUnread: false
+                )
+            } else if s.status == .running {
                 // Cancel any pending completion debounce if the conversation resumed!
                 pendingFinishSince.removeValue(forKey: s.id)
                 if liveStartedAt[s.id] == nil {
@@ -675,7 +773,7 @@ final class MonitorStore: ObservableObject {
 
         if ackDirty { saveAckState() }
 
-        let hasRunning = processed.contains { $0.status == .running }
+        let hasRunning = processed.contains { $0.status == .running || $0.status == .needsInput }
         if processed != allSessions {
             allSessions = processed
             notifyCounts()
@@ -684,23 +782,44 @@ final class MonitorStore: ObservableObject {
             lastRefreshAt = now
         }
 
-        if !newlyFinished.isEmpty {
-            celebratingUntil = now.addingTimeInterval(4.5)
+        let mutedByDND = isDNDActive
+        let t = l10n
+
+        if !newlyNeedsInput.isEmpty && !mutedByDND {
             onCompletionMoment?()
-            if soundEnabled { playSound() }
+            if soundEnabled { playSound("Ping") }
             if notificationsEnabled {
-                for item in newlyFinished.prefix(3) {
-                    let icon = item.status == .error ? "❌" : "✅"
-                    let verb = item.status == .error ? "出错" : "已完成"
+                for item in newlyNeedsInput.prefix(2) {
                     postNotification(
-                        id: "\(item.id)-\(Int((item.completedAt ?? now).timeIntervalSince1970))",
+                        id: "input-\(item.id)-\(Int(item.updatedAt.timeIntervalSince1970))",
                         sessionId: item.id,
                         deepLink: item.kind == .codex ? "codex://threads/\(item.rawId)" : nil,
-                        title: "\(icon) [\(item.kind.displayName)] \(item.project) \(verb)",
+                        title: t.needsInputNotifTitle(kind: item.kind, project: t.project(item.project)),
                         subtitle: item.title,
-                        body: "点击直接切换回 \(item.kind.displayName)",
+                        body: t.needsInputNotifBody(kind: item.kind),
                         bundleID: item.kind.targetBundleIDs.first ?? ""
                     )
+                }
+            }
+        }
+
+        if !newlyFinished.isEmpty {
+            celebratingUntil = now.addingTimeInterval(4.5)
+            if !mutedByDND {
+                onCompletionMoment?()
+                if soundEnabled { playSound() }
+                if notificationsEnabled {
+                    for item in newlyFinished.prefix(3) {
+                        postNotification(
+                            id: "\(item.id)-\(Int((item.completedAt ?? now).timeIntervalSince1970))",
+                            sessionId: item.id,
+                            deepLink: item.kind == .codex ? "codex://threads/\(item.rawId)" : nil,
+                            title: t.finishNotifTitle(kind: item.kind, project: t.project(item.project), isError: item.status == .error),
+                            subtitle: item.title,
+                            body: t.finishNotifBody(kind: item.kind),
+                            bundleID: item.kind.targetBundleIDs.first ?? ""
+                        )
+                    }
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.8) { [weak self] in
@@ -711,7 +830,7 @@ final class MonitorStore: ObservableObject {
     }
 
     private func notifyCounts() {
-        onCountsChanged?(totalRunningCount, totalUnreadCount, mascotMood)
+        onCountsChanged?(totalRunningCount, totalUnreadCount, totalNeedsInputCount, mascotMood)
     }
 
     private func postNotification(id: String, sessionId: String?, deepLink: String?, title: String, subtitle: String, body: String, bundleID: String) {

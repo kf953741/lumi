@@ -22,7 +22,7 @@ struct LumiMascotView: View {
         switch mood {
         case .celebrating, .poked, .dizzy:
             return 1.0 / 30.0
-        case .working, .error:
+        case .working, .error, .needsInput:
             return isActiveSurface ? (1.0 / 24.0) : (1.0 / 5.0)
         case .waitingUnread:
             return isActiveSurface ? (1.0 / 15.0) : (1.0 / 2.0)
@@ -69,6 +69,8 @@ struct LumiMascotView: View {
         switch mood {
         case .working:
             drawWorkingPose(in: &ctx, cx: cx, cy: cy, s: s, time: t)
+        case .needsInput:
+            drawNeedsInputPose(in: &ctx, cx: cx, cy: cy, s: s, time: t)
         case .celebrating:
             drawCelebratingPose(in: &ctx, cx: cx, cy: cy, s: s, time: t)
         case .sleeping:
@@ -90,6 +92,7 @@ struct LumiMascotView: View {
         let bob: CGFloat
         switch mood {
         case .celebrating, .poked: bob = -CGFloat(abs(Foundation.sin(t * 7.5))) * s * 0.09
+        case .needsInput:          bob = -CGFloat(abs(Foundation.sin(t * 5.2))) * s * 0.07
         case .working:             bob = CGFloat(Foundation.sin(t * 4.5)) * s * 0.04
         case .sleeping:            bob = CGFloat(Foundation.sin(t * 1.4)) * s * 0.025
         default:                   bob = CGFloat(Foundation.sin(t * 2.8)) * s * 0.03
@@ -124,11 +127,14 @@ struct LumiMascotView: View {
             drawSimpleAsymEye(in: &ctx, center: rCenter, diameter: rDia, pupilOffset: CGPoint(x: -rDia * 0.12 + gx, y: rDia * 0.05 + gy), blinking: blinking)
         }
 
-        if mood == .waitingUnread || mood == .celebrating {
+        if mood == .waitingUnread || mood == .celebrating || mood == .needsInput {
             let dotR = s * 0.13
+            let badgeColor = mood == .needsInput
+                ? Color(red: 1.0, green: 0.46, blue: 0.30)
+                : Color(red: 1.0, green: 0.82, blue: 0.30)
             ctx.fill(
                 Path(ellipseIn: CGRect(x: r.maxX - dotR * 0.85, y: r.minY - dotR * 0.35, width: dotR * 1.7, height: dotR * 1.7)),
-                with: .color(Color(red: 1.0, green: 0.82, blue: 0.30))
+                with: .color(badgeColor)
             )
         }
     }
@@ -415,6 +421,62 @@ struct LumiMascotView: View {
             .font(.system(size: max(11, s * 0.25), weight: .black, design: .rounded))
             .foregroundColor(Color(red: 1.0, green: 0.36, blue: 0.34))
         ctx.draw(alertTxt, at: CGPoint(x: rect.maxX + s * 0.07, y: rect.minY + s * 0.06))
+    }
+
+    private func drawNeedsInputPose(in ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat, s: CGFloat, time t: TimeInterval) {
+        let bounce = -CGFloat(abs(Foundation.sin(t * 4.6))) * s * 0.045
+        let tilt = Foundation.sin(t * 3.2) * 4.5
+        let bw = s * 0.65
+        let bh = bw / 0.955
+
+        drawAmbientGlow(in: &ctx, center: CGPoint(x: cx, y: cy + bounce), radius: s * 0.48, opacity: 0.32, overrideColor: Color(red: 1.0, green: 0.56, blue: 0.24))
+        drawGroundShadow(in: &ctx, cx: cx, y: cy + s * 0.38, width: bw * 0.78, height: s * 0.09, opacity: 0.38)
+
+        var bodyCtx = ctx
+        bodyCtx.translateBy(x: cx - s * 0.03, y: cy + bounce)
+        bodyCtx.rotate(by: .degrees(tilt))
+        let rect = CGRect(x: -bw * 0.5, y: -bh * 0.52, width: bw, height: bh)
+        fillBean(in: &bodyCtx, path: makeUprightBeanPath(in: rect), rect: rect)
+
+        // Wide eager asymmetric eyes looking straight at the user
+        let lCenter = CGPoint(x: rect.minX + bw * 0.346, y: rect.minY + bh * 0.44)
+        let rCenter = CGPoint(x: rect.minX + bw * 0.678, y: rect.minY + bh * 0.38)
+        let lDia = bw * 0.242
+        let rDia = bw * 0.296
+
+        let gx = max(-1, min(1, lookOffset.width)) * bw * 0.03
+        let gy = max(-1, min(1, lookOffset.height)) * bh * 0.03
+
+        bodyCtx.fill(Path(ellipseIn: CGRect(x: lCenter.x - lDia * 0.5, y: lCenter.y - lDia * 0.5, width: lDia, height: lDia)), with: .color(scleraColor))
+        bodyCtx.fill(Path(ellipseIn: CGRect(x: rCenter.x - rDia * 0.5, y: rCenter.y - rDia * 0.5, width: rDia, height: rDia)), with: .color(scleraColor))
+
+        let lp = bw * 0.098
+        let rp = bw * 0.114
+        bodyCtx.fill(Path(ellipseIn: CGRect(x: lCenter.x + gx - lp * 0.5, y: lCenter.y - bh * 0.015 + gy - lp * 0.5, width: lp, height: lp)), with: .color(inkColor))
+        bodyCtx.fill(Path(ellipseIn: CGRect(x: rCenter.x + gx - rp * 0.5, y: rCenter.y - bh * 0.015 + gy - rp * 0.5, width: rp, height: rp)), with: .color(inkColor))
+
+        // Curious asymmetric raised eyebrows (left slightly flat, right arched high)
+        let browW = max(1.4, bw * 0.042)
+        var lb = Path()
+        lb.move(to: CGPoint(x: lCenter.x - lDia * 0.44, y: lCenter.y - lDia * 0.64))
+        lb.addQuadCurve(to: CGPoint(x: lCenter.x + lDia * 0.38, y: lCenter.y - lDia * 0.72), control: CGPoint(x: lCenter.x, y: lCenter.y - lDia * 0.80))
+        bodyCtx.stroke(lb, with: .color(inkColor), style: StrokeStyle(lineWidth: browW, lineCap: .round))
+
+        var rb = Path()
+        rb.move(to: CGPoint(x: rCenter.x - rDia * 0.38, y: rCenter.y - rDia * 0.72))
+        rb.addQuadCurve(to: CGPoint(x: rCenter.x + rDia * 0.46, y: rCenter.y - rDia * 0.66), control: CGPoint(x: rCenter.x + rDia * 0.04, y: rCenter.y - rDia * 0.94))
+        bodyCtx.stroke(rb, with: .color(inkColor), style: StrokeStyle(lineWidth: browW, lineCap: .round))
+
+        // Eager small open "o" mouth
+        let mouthRect = CGRect(x: rect.minX + bw * 0.46, y: rect.minY + bh * 0.60, width: bw * 0.11, height: bh * 0.11)
+        bodyCtx.fill(Path(ellipseIn: mouthRect), with: .color(cavityColor))
+
+        // Floating pulsing warm amber-coral `?` emblem
+        let qBob = CGFloat(Foundation.sin(t * 5.0)) * s * 0.03
+        let qText = Text("?")
+            .font(.system(size: max(12, s * 0.27), weight: .black, design: .rounded))
+            .foregroundColor(Color(red: 1.0, green: 0.74, blue: 0.34))
+        ctx.draw(qText, at: CGPoint(x: cx + bw * 0.56, y: cy - bh * 0.36 + qBob))
     }
 
     private func drawDizzyPose(in ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat, s: CGFloat, time t: TimeInterval) {

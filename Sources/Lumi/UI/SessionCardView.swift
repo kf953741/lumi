@@ -1,12 +1,14 @@
 import SwiftUI
 
 /// Refined Studio Bento hairline row — native macOS app icon with Apple Knockout
-/// corner status badge (zero rainbow dots, zero colored pill clutter), clean warm
-/// monochrome metadata, and Swiss-watch tabular timestamps.
+/// corner status badge (running spinner, Ember unread checkmark, coral error `!`,
+/// or amber needs-input `?`), bilingual monochrome metadata, and duration display.
 struct BentoSessionRow: View {
     let session: AgentSession
     var nowRef: Date = Date()
     var compact: Bool = false
+    var surface: BoardSurfaceTheme = .charcoal
+    var l10n: L10n = L10n(isEnglish: false)
     let onOpen: () -> Void
     let onMarkRead: (() -> Void)?
 
@@ -16,21 +18,31 @@ struct BentoSessionRow: View {
         session.isUnread && (session.status == .done || session.status == .error)
     }
 
+    private var isNeedsInput: Bool {
+        session.status == .needsInput
+    }
+
     private var rowBackground: Color {
+        if isNeedsInput {
+            return LumiPalette.needsAmber.opacity(isHovering ? (surface.isLight ? 0.16 : 0.16) : (surface.isLight ? 0.10 : 0.09))
+        }
         if isUnreadDone {
             if session.status == .error {
                 return LumiPalette.errorCoral.opacity(isHovering ? 0.14 : 0.08)
             }
-            return LumiPalette.emberOrange.opacity(isHovering ? 0.11 : 0.05)
+            return surface.emberAccent.opacity(isHovering ? (surface.isLight ? 0.13 : 0.11) : (surface.isLight ? 0.07 : 0.05))
         }
-        return Color.white.opacity(isHovering ? 0.055 : 0.0)
+        return isHovering ? surface.hoverRowFill : Color.clear
     }
 
     private var rowBorderColor: Color {
+        if isNeedsInput {
+            return LumiPalette.needsAmber.opacity(isHovering ? 0.45 : 0.24)
+        }
         if isUnreadDone && isHovering {
             return session.status == .error
-                ? LumiPalette.errorCoral.opacity(0.30)
-                : LumiPalette.emberOrange.opacity(0.24)
+                ? LumiPalette.errorCoral.opacity(0.32)
+                : surface.emberAccent.opacity(0.26)
         }
         return Color.clear
     }
@@ -50,44 +62,64 @@ struct BentoSessionRow: View {
         HStack(alignment: .center, spacing: 6) {
             Button(action: onOpen) {
                 HStack(alignment: .center, spacing: 11) {
-                    // Leading: Pure native macOS app squircle + Apple Knockout corner badge
                     leadingAppIconWithBadge
 
-                    // Middle: Crisp title + single monochrome metadata line
                     VStack(alignment: .leading, spacing: compact ? 2 : 3.5) {
                         Text(session.title)
                             .font(.system(size: compact ? 11.8 : 12.2, weight: .semibold))
-                            .foregroundColor(compact ? LumiPalette.warmSecondary : LumiPalette.warmPrimary)
+                            .foregroundColor(compact ? surface.secondaryText : surface.primaryText)
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        if session.status == .running {
+                        if isNeedsInput {
                             HStack(spacing: 4.5) {
                                 Text(toolShortDisplay)
                                     .font(.system(size: 10.2, weight: .semibold))
-                                    .foregroundColor(Color(red: 0.92, green: 0.87, blue: 0.82).opacity(0.76))
+                                    .foregroundColor(surface.primaryText.opacity(0.76))
                                 Text("·")
                                     .font(.system(size: 10.2))
-                                    .foregroundColor(LumiPalette.warmSubtle)
-                                Text(session.project)
+                                    .foregroundColor(surface.subtleText)
+                                Text(l10n.project(session.project))
                                     .font(.system(size: 10.2, weight: .medium))
-                                    .foregroundColor(LumiPalette.warmSecondary)
+                                    .foregroundColor(surface.secondaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text("·")
+                                    .font(.system(size: 10.2))
+                                    .foregroundColor(surface.subtleText)
+                                Text(l10n.action(session.currentAction.isEmpty ? "等待你的审批或回复" : session.currentAction))
+                                    .font(.system(size: 10.2, weight: .semibold))
+                                    .foregroundColor(surface.emberHighlight)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                        } else if session.status == .running {
+                            HStack(spacing: 4.5) {
+                                Text(toolShortDisplay)
+                                    .font(.system(size: 10.2, weight: .semibold))
+                                    .foregroundColor(surface.primaryText.opacity(0.74))
+                                Text("·")
+                                    .font(.system(size: 10.2))
+                                    .foregroundColor(surface.subtleText)
+                                Text(l10n.project(session.project))
+                                    .font(.system(size: 10.2, weight: .medium))
+                                    .foregroundColor(surface.secondaryText)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 if session.activeSubagents > 0 {
                                     Text("+\(session.activeSubagents)")
                                         .font(.system(size: 8.8, weight: .semibold, design: .rounded))
-                                        .foregroundColor(Color(red: 0.92, green: 0.87, blue: 0.82).opacity(0.78))
+                                        .foregroundColor(surface.primaryText.opacity(0.76))
                                         .padding(.horizontal, 4.5)
                                         .padding(.vertical, 0.8)
-                                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                                        .background(Capsule().fill(surface.pillBg))
                                 }
                                 Text("·")
                                     .font(.system(size: 10.2))
-                                    .foregroundColor(LumiPalette.warmSubtle)
-                                Text(session.currentAction)
+                                    .foregroundColor(surface.subtleText)
+                                Text(l10n.action(session.currentAction))
                                     .font(.system(size: 10.2))
-                                    .foregroundColor(LumiPalette.warmPrimary.opacity(0.74))
+                                    .foregroundColor(surface.primaryText.opacity(0.72))
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                             }
@@ -95,17 +127,17 @@ struct BentoSessionRow: View {
                             HStack(spacing: 4.5) {
                                 Text(toolShortDisplay)
                                     .font(.system(size: 10.2, weight: .semibold))
-                                    .foregroundColor(Color(red: 0.92, green: 0.87, blue: 0.82).opacity(compact ? 0.56 : 0.76))
+                                    .foregroundColor(surface.primaryText.opacity(compact ? 0.56 : 0.74))
                                 Text("·")
                                     .font(.system(size: 10.2))
-                                    .foregroundColor(LumiPalette.warmSubtle)
-                                Text(session.project)
+                                    .foregroundColor(surface.subtleText)
+                                Text(l10n.project(session.project))
                                     .font(.system(size: 10.2, weight: .medium))
-                                    .foregroundColor(compact ? LumiPalette.warmSubtle : LumiPalette.warmSecondary)
+                                    .foregroundColor(compact ? surface.subtleText : surface.secondaryText)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 if session.status == .error {
-                                    Text("· 执行出错")
+                                    Text(l10n.errorTag)
                                         .font(.system(size: 10.2, weight: .medium))
                                         .foregroundColor(LumiPalette.errorCoral)
                                 }
@@ -115,7 +147,6 @@ struct BentoSessionRow: View {
 
                     Spacer(minLength: 8)
 
-                    // Right side: Swiss-watch clean tabular timer or crisp hover CTA
                     trailingMeta
                 }
                 .padding(.vertical, compact ? 7.0 : 8.5)
@@ -127,12 +158,12 @@ struct BentoSessionRow: View {
                 Button(action: onMarkRead) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(LumiPalette.warmSecondary)
+                        .foregroundColor(surface.secondaryText)
                         .frame(width: 21, height: 21)
-                        .background(Circle().fill(Color.white.opacity(0.08)))
+                        .background(Circle().fill(surface.pillBg))
                 }
                 .buttonStyle(.plain)
-                .help("仅标为已读")
+                .help(l10n.helpMarkReadOnly)
             }
         }
         .padding(.horizontal, 10)
@@ -149,9 +180,13 @@ struct BentoSessionRow: View {
                 isHovering = hovering
             }
         }
-        .help(isUnreadDone
-              ? "单击切换到 \(session.kind.displayName) 并移出待查看"
-              : "单击切换到 \(session.kind.displayName)")
+        .help(
+            isNeedsInput
+                ? l10n.helpJumpNeedsInput(session.kind.displayName)
+                : (isUnreadDone
+                    ? l10n.helpJumpUnread(session.kind.displayName)
+                    : l10n.helpJump(session.kind.displayName))
+        )
     }
 
     // MARK: - Native App Icon + Apple Knockout Corner Badge
@@ -163,16 +198,25 @@ struct BentoSessionRow: View {
         return ZStack {
             NativeAgentIconView(kind: session.kind, visualSize: iconSize, dimmed: compact)
 
-            if session.status == .running {
+            if isNeedsInput {
+                ZStack {
+                    Circle().fill(surface.knockoutBg).frame(width: 14.5, height: 14.5)
+                    Circle().fill(LumiPalette.needsAmber).frame(width: 11, height: 11)
+                    Text("?")
+                        .font(.system(size: 7.8, weight: .black, design: .rounded))
+                        .foregroundColor(LumiPalette.darkInk)
+                }
+                .offset(x: 10.5, y: 10.5)
+            } else if session.status == .running {
                 KnockoutRunningSpinner(
-                    accent: LumiPalette.emberGold,
-                    knockoutColor: LumiPalette.knockoutBg
+                    accent: surface.emberHighlight,
+                    knockoutColor: surface.knockoutBg
                 )
                 .offset(x: 10.5, y: 10.5)
             } else if isUnreadDone {
                 ZStack {
                     Circle()
-                        .fill(LumiPalette.knockoutBg)
+                        .fill(surface.knockoutBg)
                         .frame(width: 14, height: 14)
 
                     if session.status == .error {
@@ -184,11 +228,11 @@ struct BentoSessionRow: View {
                             .foregroundColor(LumiPalette.darkInk)
                     } else {
                         Circle()
-                            .fill(LumiPalette.emberOrange)
+                            .fill(surface.emberAccent)
                             .frame(width: 10.5, height: 10.5)
                         Image(systemName: "checkmark")
                             .font(.system(size: 6.2, weight: .black))
-                            .foregroundColor(LumiPalette.darkInk)
+                            .foregroundColor(surface.ctaText)
                     }
                 }
                 .offset(x: 10.5, y: 10.5)
@@ -199,15 +243,22 @@ struct BentoSessionRow: View {
 
     @ViewBuilder
     private var trailingMeta: some View {
-        if isUnreadDone && isHovering {
-            Text("打开 ↗")
+        if isNeedsInput {
+            Text(l10n.replyCTA)
                 .font(.system(size: 10.2, weight: .semibold))
-                .foregroundColor(LumiPalette.darkInk)
+                .foregroundColor(surface.ctaText)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
+                .background(Capsule().fill(surface.ctaFill))
+        } else if isUnreadDone && isHovering {
+            Text(l10n.openCTA)
+                .font(.system(size: 10.2, weight: .semibold))
+                .foregroundColor(surface.ctaText)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3.5)
                 .background(
                     Capsule().fill(
-                        session.status == .error ? LumiPalette.errorCoral : LumiPalette.emberGold
+                        session.status == .error ? LumiPalette.errorCoral : surface.ctaFill
                     )
                 )
         } else if session.status == .running {
@@ -215,28 +266,39 @@ struct BentoSessionRow: View {
                 let elapsed = max(0, nowRef.timeIntervalSince(session.startedAt ?? session.updatedAt))
                 Text(ProjectNameHelper.formatDuration(elapsed))
                     .font(.system(size: 10.6, weight: .medium, design: .monospaced))
-                    .foregroundColor(LumiPalette.warmSubtle)
+                    .foregroundColor(surface.subtleText)
                 if isHovering {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 9.2, weight: .semibold))
-                        .foregroundColor(LumiPalette.warmSecondary)
+                        .foregroundColor(surface.secondaryText)
                 }
             }
         } else {
-            HStack(spacing: 5) {
+            HStack(spacing: 4.5) {
                 if let comp = session.completedAt {
-                    Text(ProjectNameHelper.formatClock(comp))
-                        .font(.system(size: 10.4, weight: .medium, design: .monospaced))
-                        .foregroundColor(
-                            isUnreadDone
-                                ? (session.status == .error ? LumiPalette.errorCoral : LumiPalette.emberGold.opacity(0.92))
-                                : LumiPalette.warmSubtle.opacity(0.85)
-                        )
+                    let clockStr = ProjectNameHelper.formatClock(comp)
+                    if !compact, let dur = session.durationSec, dur >= 5 {
+                        Text("\(clockStr) · \(ProjectNameHelper.formatDuration(dur))")
+                            .font(.system(size: 10.0, weight: .medium, design: .monospaced))
+                            .foregroundColor(
+                                isUnreadDone
+                                    ? (session.status == .error ? LumiPalette.errorCoral : surface.emberHighlight.opacity(0.92))
+                                    : surface.subtleText.opacity(0.85)
+                            )
+                    } else {
+                        Text(clockStr)
+                            .font(.system(size: 10.4, weight: .medium, design: .monospaced))
+                            .foregroundColor(
+                                isUnreadDone
+                                    ? (session.status == .error ? LumiPalette.errorCoral : surface.emberHighlight.opacity(0.92))
+                                    : surface.subtleText.opacity(0.85)
+                            )
+                    }
                 }
                 if isHovering && !isUnreadDone {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 9.2, weight: .semibold))
-                        .foregroundColor(LumiPalette.warmSecondary)
+                        .foregroundColor(surface.secondaryText)
                 }
             }
         }

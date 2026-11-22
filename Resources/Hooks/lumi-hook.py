@@ -49,6 +49,9 @@ def normalize_event(raw):
         "stop": "Stop",
         "session.idle": "Stop",
         "session.busy": "UserPromptSubmit",
+        "PermissionRequest": "NeedsInput",
+        "Elicitation": "NeedsInput",
+        "Notification": "Notification",
     }
     return mapping.get(raw, raw)
 
@@ -211,12 +214,33 @@ def main():
             elif norm_event == "PreToolUse":
                 if not rec.get("turnStartedAt"):
                     rec["turnStartedAt"] = now
-                rec["state"] = "running"
-                if t_name:
-                    rec["toolName"] = str(t_name)
-                if t_label:
-                    rec["action"] = t_label
-                    rec["lastToolLabel"] = t_label
+                if str(t_name or "").lower() in ("ask_question", "askuserquestion"):
+                    rec["state"] = "needs_input"
+                    rec["action"] = "等待你确认/回答"
+                else:
+                    rec["state"] = "running"
+                    if t_name:
+                        rec["toolName"] = str(t_name)
+                    if t_label:
+                        rec["action"] = t_label
+                        rec["lastToolLabel"] = t_label
+            elif norm_event == "NeedsInput":
+                rec["state"] = "needs_input"
+                rec["action"] = f"等待确认 · {t_label}" if t_label else "等待你的审批或回复"
+            elif norm_event == "Notification":
+                ntype = str(payload.get("notification_type") or payload.get("type") or "").lower()
+                nmsg = clean_line(payload.get("message") or payload.get("title") or "", 48)
+                low_msg = nmsg.lower()
+                if (
+                    "permission" in ntype
+                    or "elicitation" in ntype
+                    or "input" in ntype
+                    or "approval" in low_msg
+                    or "permission" in low_msg
+                    or "waiting" in low_msg
+                ):
+                    rec["state"] = "needs_input"
+                    rec["action"] = f"等待确认 · {nmsg}" if nmsg else "等待你的审批或回复"
             elif norm_event == "PostToolUse":
                 rec["state"] = "running"
                 if t_label:

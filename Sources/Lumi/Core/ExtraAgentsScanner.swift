@@ -28,7 +28,9 @@ final class ExtraAgentsScanner: @unchecked Sendable {
                 )
 
                 let status: SessionStatus
-                if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 {
+                if hook.state == "needs_input" && now.timeIntervalSince(hook.updatedAt) < 1200 {
+                    status = .needsInput
+                } else if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 {
                     status = .running
                 } else if hook.state == "error" {
                     status = .error
@@ -47,13 +49,15 @@ final class ExtraAgentsScanner: @unchecked Sendable {
                     cwd: path,
                     isCLI: false,
                     status: status,
-                    currentAction: status == .running
-                        ? (hook.action.isEmpty ? "执行中…" : hook.action)
-                        : (status == .error ? hook.action : "已完成"),
+                    currentAction: status == .needsInput
+                        ? (hook.action.isEmpty ? "等待你的审批或回复" : hook.action)
+                        : (status == .running
+                            ? (hook.action.isEmpty ? "执行中…" : hook.action)
+                            : (status == .error ? hook.action : "已完成")),
                     detailSummary: "",
                     startedAt: hook.turnStartedAt,
                     updatedAt: hook.updatedAt,
-                    completedAt: status == .running ? nil : (hook.completedAt ?? hook.updatedAt),
+                    completedAt: (status == .running || status == .needsInput) ? nil : (hook.completedAt ?? hook.updatedAt),
                     durationSec: hook.durationSec,
                     activeSubagents: 0,
                     isUnread: false

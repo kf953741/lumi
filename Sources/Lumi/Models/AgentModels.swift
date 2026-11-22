@@ -67,10 +67,22 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .opencode:    return "~/.config/opencode/plugins/lumi.js"
         }
     }
+    public func hookDescription(isEnglish: Bool) -> String {
+        guard isEnglish else { return hookDescription }
+        switch self {
+        case .antigravity: return "~/.gemini/config/hooks.json (+ auto DB watch)"
+        case .codex:       return "~/.codex/hooks.json (+ zero-config Desktop & CLI watch)"
+        case .claude:      return "~/.claude/settings.json (+ zero-config session watch)"
+        case .cursor:      return "~/.cursor/hooks.json"
+        case .gemini:      return "~/.gemini/settings.json"
+        case .opencode:    return "~/.config/opencode/plugins/lumi.js"
+        }
+    }
 }
 
 public enum SessionStatus: String, Codable, Sendable {
     case running
+    case needsInput
     case done
     case error
     case canceled
@@ -84,6 +96,17 @@ public enum AgentFilter: String, CaseIterable, Identifiable, Sendable {
     case others = "其他"
 
     public var id: String { rawValue }
+
+    public func label(isEnglish: Bool) -> String {
+        guard isEnglish else { return rawValue }
+        switch self {
+        case .all:         return "All Agents"
+        case .antigravity: return "Antigravity"
+        case .codex:       return "Codex"
+        case .claude:      return "Claude"
+        case .others:      return "Others"
+        }
+    }
 
     public func matches(_ kind: AgentKind) -> Bool {
         switch self {
@@ -105,9 +128,13 @@ public enum DisplayMode: String, Codable, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 
     public var label: String {
+        label(isEnglish: false)
+    }
+
+    public func label(isEnglish: Bool) -> String {
         switch self {
-        case .notch: return "刘海灵动岛"
-        case .floating: return "桌面悬浮看板"
+        case .notch:    return isEnglish ? "Dynamic Notch" : "刘海灵动岛"
+        case .floating: return isEnglish ? "Floating Board" : "桌面悬浮看板"
         }
     }
 }
@@ -142,6 +169,10 @@ public enum MascotTheme: String, Codable, CaseIterable, Identifiable, Sendable {
         case .sakura: return "Berry"
         case .cloud:  return "Cloud"
         }
+    }
+
+    public func localizedName(isEnglish: Bool) -> String {
+        isEnglish ? englishName : displayName
     }
 
     public var bodyTop: Color {
@@ -214,6 +245,7 @@ public enum MascotTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 public enum MascotMood: Equatable, Sendable {
     case sleeping
     case working
+    case needsInput
     case celebrating
     case waitingUnread
     case error

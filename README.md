@@ -42,7 +42,9 @@ When you run 5–10 AI coding conversations in parallel across **Antigravity**, 
 | **Dual Form Factor** | Notch-only or window-only | **Dynamic Notch Island ↔ 1-Click Floating Desktop Board** — seamless concave bezel fusion on MacBook Pro/Air, auto-adapts to non-notch external monitors |
 | **Subagent & Noise Hygiene** | Subagents & CLI jobs flood the list | Rolls active subagents into **`+N` badges** on the parent dialog; separates standalone chats from headless CLI runs; 4.5s settle debounce prevents premature finish popups |
 | **Zero-Config + Hooks** | Manual JSON editing required | **Out-of-the-box local watch** for Antigravity, Codex (Desktop & CLI), and Claude Code + **1-click Hook Installer** (with automatic backup) for all 6 agents |
-| **Original Vector Mascot** | Static icon or 60 fps CPU burn | **Lumi Ember** — warm Californian editorial luminous bean drawn in pure SwiftUI `Canvas` with goofy asymmetric eyes, `{ }` coding squint, joyful confetti jumps, slumped `Zzz` sleep & dizzy easter egg — **adaptive FPS (< 2% idle CPU)** |
+| **Approval / Needs-Input Alerts** | Silent when agent blocks on a prompt | **Instant `Needs Input` priority section + `?` mascot alert** when Claude/Codex/Antigravity pauses for approval or a question |
+| **Bilingual & Controls** | Single-language, mouse-only | **Live English / 中文 hot-switch**, global toggle hotkey (`⌥L` + `Esc`), fullscreen auto-peek guard, **Morning Oat Light** floating theme, 1-click DND mute, and manual update check |
+| **Original Vector Mascot** | Static icon or 60 fps CPU burn | **Lumi Ember** — warm Californian editorial luminous bean drawn in pure SwiftUI `Canvas` with goofy asymmetric eyes, `{ }` coding squint, `?` approval cue, joyful confetti jumps, slumped `Zzz` sleep & dizzy easter egg — **adaptive FPS (< 2% idle CPU)** |
 
 ---
 
@@ -132,7 +134,7 @@ open -a /Applications/Lumi.app
 
 > **Note:** To package your own distributable `.dmg` with SHA-256 checksum:
 > ```bash
-> ./scripts/package_dmg.sh 1.2.0
+> ./scripts/package_dmg.sh 1.3.0
 > ```
 
 ---
@@ -140,10 +142,10 @@ open -a /Applications/Lumi.app
 ## Usage Guide
 
 ### 1. Everyday Controls & Gestures
-- **Expand / Collapse Notch**: Gently move your cursor over the MacBook notch (or click the notch ears / menu bar `⚡N · ✓M` badge to pin it open).
-- **Jump & Auto-Read**: **Single-click** any completed row in **Unread** to switch directly to that conversation — Lumi automatically marks it read and moves it into **Recently Read**. Hovering also reveals a quick `✓` button to mark read without switching windows.
-- **Switch Form Factor**: Click **Desktop Mode** (`桌面模式`) in the control strip to pop out into a draggable floating board; click **Dock to Notch** (`回到刘海`) anytime to return.
-- **Quick Menu & Quit**: Right-click the menu bar icon (`⚡N · ✓M` or `✨`) to switch modes, mark all read, open Settings, or **Quit Lumi** (`⌘Q` is also available at the bottom of Settings).
+- **Expand / Collapse Notch**: Gently move your cursor over the MacBook notch, press **`⌥L`** from anywhere (configurable in Settings; press **`Esc`** to dismiss), or click the menu bar Lumi Ember icon.
+- **Jump, Duration & Auto-Read**: **Single-click** any completed row in **Unread** (displaying finish clock + total run duration) to switch directly to that conversation — Lumi automatically marks it read and moves it into **Recently Read**. Hovering also reveals a quick `✓` button to mark read without switching windows.
+- **Switch Form Factor & Theme**: Click **Desktop** in the control strip to pop out into a draggable floating board (toggle between **Warm Charcoal** and **Morning Oat Light** with the `☀ / ☾` icon); click **Notch** anytime to dock back.
+- **Quick Menu, DND & Language**: Right-click the menu bar Lumi Ember silhouette icon to switch modes, enable **Do Not Disturb (30 min / 1 hr)**, hot-switch **English / 简体中文** without restarting, mark all read, open Settings, or **Quit Lumi** (`⌘Q`).
 
 ### 2. Connecting AI Coding Agents
 1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, and **Claude Code** are tracked automatically with zero setup.

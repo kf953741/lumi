@@ -60,7 +60,8 @@ final class ClaudeScanner: @unchecked Sendable {
             let title = ProjectNameHelper.cleanOneLine(rawTitle.isEmpty ? (project.isEmpty ? "Claude 会话" : project) : rawTitle, maxLength: 78)
 
             let status: SessionStatus
-            if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 { status = .running }
+            if hook.state == "needs_input" && now.timeIntervalSince(hook.updatedAt) < 1200 { status = .needsInput }
+            else if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 { status = .running }
             else if hook.state == "error" { status = .error }
             else if hook.state == "canceled" { status = .canceled }
             else { status = .done }
@@ -74,11 +75,13 @@ final class ClaudeScanner: @unchecked Sendable {
                 cwd: hook.cwd,
                 isCLI: false,
                 status: status,
-                currentAction: status == .running ? (hook.action.isEmpty ? "思考与执行中…" : hook.action) : "已完成",
+                currentAction: status == .needsInput
+                    ? (hook.action.isEmpty ? "等待你的审批或回复" : hook.action)
+                    : (status == .running ? (hook.action.isEmpty ? "思考与执行中…" : hook.action) : "已完成"),
                 detailSummary: "",
                 startedAt: hook.turnStartedAt,
                 updatedAt: hook.updatedAt,
-                completedAt: status == .running ? nil : (hook.completedAt ?? hook.updatedAt),
+                completedAt: (status == .running || status == .needsInput) ? nil : (hook.completedAt ?? hook.updatedAt),
                 durationSec: hook.durationSec,
                 activeSubagents: 0,
                 isUnread: false
@@ -145,6 +148,7 @@ final class ClaudeScanner: @unchecked Sendable {
         var aiTitle = ""
         var lastAction = ""
         var isRunningFromTranscript = false
+        var needsInputFromTranscript = false
 
         for line in lines where !line.isEmpty {
             guard let d = line.data(using: .utf8),
@@ -159,28 +163,37 @@ final class ClaudeScanner: @unchecked Sendable {
                 let txt = extractText(from: msg["content"])
                 if firstPrompt.isEmpty && !txt.isEmpty { firstPrompt = txt }
                 isRunningFromTranscript = true
+                needsInputFromTranscript = false
                 lastAction = "思考规划中…"
             } else if t == "assistant", let msg = o["message"] as? [String: Any] {
                 if let blocks = msg["content"] as? [[String: Any]] {
                     var hasToolUse = false
+                    var asksUser = false
                     for b in blocks {
                         let bt = b["type"] as? String ?? ""
                         if bt == "tool_use" {
                             hasToolUse = true
                             let name = b["name"] as? String ?? ""
-                            let inputStr: String
-                            if let inp = b["input"], let jd = try? JSONSerialization.data(withJSONObject: inp),
-                               let js = String(data: jd, encoding: .utf8) {
-                                inputStr = js
+                            if name.lowercased() == "askuserquestion" || name.lowercased() == "ask_question" {
+                                asksUser = true
+                                lastAction = "等待你确认/回答"
                             } else {
-                                inputStr = ""
+                                let inputStr: String
+                                if let inp = b["input"], let jd = try? JSONSerialization.data(withJSONObject: inp),
+                                   let js = String(data: jd, encoding: .utf8) {
+                                    inputStr = js
+                                } else {
+                                    inputStr = ""
+                                }
+                                lastAction = ToolActionFormatter.describe(name: name, rawInput: inputStr)
                             }
-                            lastAction = ToolActionFormatter.describe(name: name, rawInput: inputStr)
                         }
                     }
-                    isRunningFromTranscript = hasToolUse || (msg["stop_reason"] == nil)
+                    needsInputFromTranscript = asksUser
+                    isRunningFromTranscript = !asksUser && (hasToolUse || (msg["stop_reason"] == nil))
                     if !hasToolUse && (msg["stop_reason"] as? String) == "end_turn" {
                         isRunningFromTranscript = false
+                        needsInputFromTranscript = false
                         lastAction = "已完成"
                     }
                 }
@@ -190,6 +203,9 @@ final class ClaudeScanner: @unchecked Sendable {
         if isRunningFromTranscript && now.timeIntervalSince(mtime) > 180 {
             isRunningFromTranscript = false
             lastAction = "已完成"
+        }
+        if needsInputFromTranscript && now.timeIntervalSince(mtime) > 1200 {
+            needsInputFromTranscript = false
         }
 
         let effectiveCwd = !cwd.isEmpty ? cwd : (hook?.cwd ?? "")
@@ -201,13 +217,17 @@ final class ClaudeScanner: @unchecked Sendable {
                   : (!firstPrompt.isEmpty ? firstPrompt : (hook?.firstUserInput ?? project))))
         let title = ProjectNameHelper.cleanOneLine(rawTitle.isEmpty ? "Claude 会话" : rawTitle, maxLength: 78)
 
-        var status: SessionStatus = isRunningFromTranscript ? .running : .done
+        var status: SessionStatus = needsInputFromTranscript ? .needsInput : (isRunningFromTranscript ? .running : .done)
         var action = lastAction.isEmpty ? (status == .running ? "执行中…" : "已完成") : lastAction
-        var completedAt: Date? = status == .running ? nil : mtime
+        var completedAt: Date? = (status == .running || status == .needsInput) ? nil : mtime
         var startedAt: Date? = hook?.turnStartedAt
 
         if let hook, hook.updatedAt.timeIntervalSince(mtime) > -2 {
-            if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 {
+            if hook.state == "needs_input" && now.timeIntervalSince(hook.updatedAt) < 1200 {
+                status = .needsInput
+                if !hook.action.isEmpty { action = hook.action }
+                completedAt = nil
+            } else if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 {
                 status = .running
                 if !hook.action.isEmpty { action = hook.action }
                 completedAt = nil

@@ -9,16 +9,17 @@ struct FloatingBoardView: View {
 
     @State private var lookOffset: CGSize = .zero
 
+    private var surface: BoardSurfaceTheme {
+        store.floatingAppearance == .oatLight ? .oatLight : .charcoal
+    }
+
     var body: some View {
         ZStack {
-            // Warm Charcoal frosted glass (subtle ambient blur + crisp warm-white readability)
+            // Warm Charcoal (dark) OR Morning Oat Cream (light) frosted glass backdrop
             ZStack {
-                LiquidGlassBackdrop(material: .hudWindow)
+                LiquidGlassBackdrop(material: surface.isLight ? .popover : .hudWindow, isLight: surface.isLight)
                 LinearGradient(
-                    colors: [
-                        LumiPalette.shellTop.opacity(0.90),
-                        LumiPalette.shellBottom.opacity(0.94)
-                    ],
+                    colors: [surface.shellTop, surface.shellBottom],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -28,12 +29,7 @@ struct FloatingBoardView: View {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
-                            colors: [
-                                LumiPalette.champagneRim.opacity(0.20),
-                                LumiPalette.champagneRim.opacity(0.07),
-                                Color.white.opacity(0.03),
-                                LumiPalette.emberGold.opacity(0.11)
-                            ],
+                            colors: surface.rimColors,
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
@@ -44,13 +40,14 @@ struct FloatingBoardView: View {
             StudioBentoBoardView(
                 store: store,
                 inNotch: false,
+                surface: surface,
                 lookOffset: lookOffset,
                 onSwitchMode: onDockToNotch,
                 onOpenSettings: onOpenSettings,
                 onHide: onHide
             )
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(surface.isLight ? .light : .dark)
         .frame(minWidth: 420, minHeight: 410)
     }
 }

@@ -24,7 +24,94 @@ enum LumiPalette {
     static let emberGold     = Color(red: 0.992, green: 0.702, blue: 0.345) // #FDB358
     static let runningIvory  = Color(red: 0.925, green: 0.880, blue: 0.825)
     static let errorCoral    = Color(red: 0.965, green: 0.400, blue: 0.365)
+    static let needsAmber    = Color(red: 1.000, green: 0.530, blue: 0.250)
     static let darkInk       = Color(red: 0.140, green: 0.100, blue: 0.080)
+}
+
+/// Dual-surface appearance tokens: Warm Charcoal Hearth (default & mandatory for hardware Notch)
+/// + optional Morning Oat Cream light surface for Floating Desktop Board.
+struct BoardSurfaceTheme {
+    let isLight: Bool
+
+    static let charcoal = BoardSurfaceTheme(isLight: false)
+    static let oatLight = BoardSurfaceTheme(isLight: true)
+
+    var shellTop: Color {
+        isLight ? Color(red: 0.972, green: 0.950, blue: 0.918).opacity(0.94) : LumiPalette.shellTop.opacity(0.90)
+    }
+    var shellBottom: Color {
+        isLight ? Color(red: 0.948, green: 0.918, blue: 0.875).opacity(0.96) : LumiPalette.shellBottom.opacity(0.94)
+    }
+    var cardTop: Color {
+        isLight ? Color(red: 1.000, green: 0.994, blue: 0.984).opacity(0.93) : LumiPalette.cardTop.opacity(0.88)
+    }
+    var cardBottom: Color {
+        isLight ? Color(red: 0.992, green: 0.980, blue: 0.962).opacity(0.96) : LumiPalette.cardBottom.opacity(0.92)
+    }
+    var stageTop: Color {
+        isLight ? Color(red: 0.996, green: 0.945, blue: 0.886) : LumiPalette.stageTop.opacity(0.94)
+    }
+    var stageBottom: Color {
+        isLight ? Color(red: 0.978, green: 0.896, blue: 0.818) : LumiPalette.stageBottom.opacity(0.96)
+    }
+    var knockoutBg: Color {
+        isLight ? Color(red: 0.995, green: 0.988, blue: 0.975) : LumiPalette.knockoutBg
+    }
+    var primaryText: Color {
+        isLight ? Color(red: 0.149, green: 0.122, blue: 0.106) : LumiPalette.warmPrimary
+    }
+    var secondaryText: Color {
+        isLight ? Color(red: 0.440, green: 0.375, blue: 0.330) : LumiPalette.warmSecondary
+    }
+    var subtleText: Color {
+        isLight ? Color(red: 0.560, green: 0.490, blue: 0.440) : LumiPalette.warmSubtle
+    }
+    var divider: Color {
+        isLight ? Color(red: 0.550, green: 0.450, blue: 0.360).opacity(0.14) : LumiPalette.warmDivider
+    }
+    var emberAccent: Color {
+        isLight ? Color(red: 0.880, green: 0.425, blue: 0.140) : LumiPalette.emberOrange
+    }
+    var emberHighlight: Color {
+        isLight ? Color(red: 0.855, green: 0.410, blue: 0.135) : LumiPalette.emberGold
+    }
+    var runningTone: Color {
+        isLight ? Color(red: 0.270, green: 0.220, blue: 0.190) : LumiPalette.runningIvory
+    }
+    var pillBg: Color {
+        isLight ? Color(red: 0.945, green: 0.905, blue: 0.855) : Color.white.opacity(0.09)
+    }
+    var segmentedTrack: Color {
+        isLight ? Color(red: 0.935, green: 0.892, blue: 0.840) : Color.black.opacity(0.22)
+    }
+    var segmentedActive: Color {
+        isLight ? Color.white : Color.white.opacity(0.15)
+    }
+    var hoverRowFill: Color {
+        isLight ? Color(red: 0.62, green: 0.48, blue: 0.36).opacity(0.08) : Color.white.opacity(0.055)
+    }
+    var ctaText: Color {
+        isLight ? Color.white : LumiPalette.darkInk
+    }
+    var ctaFill: Color {
+        isLight ? Color(red: 0.890, green: 0.435, blue: 0.145) : LumiPalette.emberGold
+    }
+    var rimColors: [Color] {
+        if isLight {
+            return [
+                Color.white.opacity(0.95),
+                Color(red: 0.85, green: 0.78, blue: 0.70).opacity(0.45),
+                Color(red: 0.80, green: 0.73, blue: 0.65).opacity(0.55),
+                Color.white.opacity(0.85)
+            ]
+        }
+        return [
+            LumiPalette.champagneRim.opacity(0.22),
+            LumiPalette.champagneRim.opacity(0.08),
+            Color.white.opacity(0.03),
+            LumiPalette.emberGold.opacity(0.10)
+        ]
+    }
 }
 
 // MARK: - Native macOS App Icon Cache (Runtime NSWorkspace Lookup + Zero Bundled Proprietary Assets)

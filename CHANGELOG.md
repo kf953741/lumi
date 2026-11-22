@@ -2,6 +2,17 @@
 
 All notable changes to **Lumi** will be documented in this file.
 
+## [1.3.0] - 2026-11-22
+
+### Added
+- **Live Bilingual UI (`English` / `简体中文` / `Follow System`)**: Added instant zero-restart language switching across the Dynamic Notch, Floating Board, Settings, Menu Bar, macOS notifications, and dynamic tool action labels (`Localization.swift`).
+- **Needs-Input / Approval Alerts (`needsInput`)**: Detects permission prompts, approval requests, and interactive user questions across Claude Code, Codex, Antigravity, and hook-connected agents — immediately surfaces a top-priority section with an Apple Knockout `?` badge, dedicated curious `?` Lumi Ember mascot pose, and instant `Reply ↗` jump without waiting for the 4.5s completion debounce.
+- **Global Toggle Hotkey & `Esc` Dismiss**: Zero-permission Carbon `RegisterEventHotKey` global hotkey (`⌥L` default, configurable to `⌃⌥L`, `⌘⇧L`, or Off) plus `Esc` quick collapse (`GlobalHotKeyManager.swift`).
+- **Smart Fullscreen Auto-Peek Guard**: Automatically suppresses completion notch auto-peeks during fullscreen video playback, games, or presentations (configurable in Settings).
+- **Morning Oat Light Theme for Floating Board**: Added an optional Headspace-inspired warm parchment light appearance (`FloatingAppearance.oatLight`) with 1-click `☀ / ☾` toggle on the Floating Board while keeping Dynamic Notch seamlessly matte-black at the hardware bezel.
+- **Do Not Disturb Quick Mute & Manual Update Checker**: Added 30-minute / 1-hour DND mute controls in both the Menu Bar and Settings, plus a strictly user-initiated GitHub Releases update checker (`UpdateChecker.swift`) that preserves zero background network activity.
+- **Custom Menu Bar Lumi Ember Icon & Completed Run Duration**: Replaced the generic menu bar sparkle with a custom 18×18 adaptive template Lumi Ember bean silhouette and added total run duration (`17:05 · 2m18s`) on finished session rows.
+
 ## [1.2.0] - 2026-11-22
 
 ### Changed

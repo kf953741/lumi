@@ -21,7 +21,7 @@ open -a /Applications/Lumi.app
 ```text
 Sources/Lumi/
 ├── App/         # AppDelegate, Menu Bar, NotchWindowController (hardware notch detection)
-├── Core/        # Antigravity, Codex, Claude, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
+├── Core/        # Antigravity, Codex, Claude, Extra scanners, SQLiteReader, HookInstaller, Localization, GlobalHotKeyManager, UpdateChecker, MonitorStore
 ├── Mascot/      # LumiMascotView (Lumi Ember lineless Canvas bean with adaptive FPS & eye tracking)
 ├── Models/      # AgentModels, ProjectNameHelper, ToolActionFormatter
 └── UI/          # NotchIslandView, FloatingBoardView, StudioBentoBoardView, SessionCardView, NativeAgentIconView, SettingsView

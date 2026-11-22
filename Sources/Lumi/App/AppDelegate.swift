@@ -19,7 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var floatingPanel: NSPanel!
     private var settingsWindow: NSWindow?
     private var notchController: NotchWindowController!
+    private let hotKeyManager = GlobalHotKeyManager()
+    private var localKeyMonitor: Any?
     private let store = MonitorStore()
+    private lazy var menuBarEmberIcon: NSImage = makeMenuBarEmberTemplateIcon()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupNotifications()
@@ -41,12 +44,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         store.onScreenChanged = { [weak self] in
             self?.notchController.recomputeScreenGeometry(animated: false)
         }
-        store.onCountsChanged = { [weak self] running, unread, _ in
-            self?.updateStatusItem(running: running, unread: unread)
+        store.onLanguageChanged = { [weak self] in
+            guard let self else { return }
+            self.settingsWindow?.title = self.store.l10n.settingsWindowTitle
+            self.updateStatusItem(
+                running: self.store.totalRunningCount,
+                unread: self.store.totalUnreadCount,
+                needsInput: self.store.totalNeedsInputCount
+            )
+        }
+        store.onHotKeyPresetChanged = { [weak self] preset in
+            self?.registerGlobalHotKey(preset: preset)
+        }
+        store.onCountsChanged = { [weak self] running, unread, needsInput, _ in
+            self?.updateStatusItem(running: running, unread: unread, needsInput: needsInput)
         }
         store.onCompletionMoment = { [weak self] in
             guard let self, self.store.displayMode == .notch else { return }
             self.notchController.peekBrieflyForCompletion()
+        }
+
+        registerGlobalHotKey(preset: store.hotKeyPreset)
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 { // Escape collapses expanded notch or hides floating board
+                guard let self else { return event }
+                if self.store.displayMode == .notch && self.notchController.isExpanded {
+                    self.notchController.collapseAfterJump()
+                    return nil
+                } else if self.store.displayMode == .floating && self.floatingPanel.isKeyWindow {
+                    self.floatingPanel.orderOut(nil)
+                    return nil
+                }
+            }
+            return event
         }
 
         NotificationCenter.default.addObserver(
@@ -106,40 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler()
     }
 
-    // MARK: - Menu Bar
-
-    private func setupStatusBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        guard let btn = statusItem.button else { return }
-        btn.target = self
-        btn.action = #selector(statusItemClicked(_:))
-        btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        updateStatusItem(running: 0, unread: 0)
+    private func registerGlobalHotKey(preset: GlobalHotKeyPreset) {
+        hotKeyManager.register(preset: preset) { [weak self] in
+            self?.togglePrimaryUI()
+        }
     }
 
-    private func updateStatusItem(running: Int, unread: Int) {
-        guard let btn = statusItem?.button else { return }
-        var parts: [String] = []
-        if running > 0 { parts.append("⚡\(running)") }
-        if unread > 0 { parts.append("✓\(unread)") }
-
-        if parts.isEmpty {
-            let img = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Lumi")
-            img?.isTemplate = true
-            btn.image = img
-            btn.title = ""
-        } else {
-            btn.image = nil
-            btn.title = " " + parts.joined(separator: " · ") + " "
-        }
-        btn.toolTip = "Lumi — 执行中: \(running) · 待查看: \(unread)（左键展开/切换，右键菜单）"
-    }
-
-    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            showContextMenu()
-            return
-        }
+    private func togglePrimaryUI() {
         if store.displayMode == .notch {
             notchController.toggleExpanded()
         } else if floatingPanel.isVisible {
@@ -149,24 +152,156 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    // MARK: - Menu Bar
+
+    private func setupStatusBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard let btn = statusItem.button else { return }
+        btn.target = self
+        btn.action = #selector(statusItemClicked(_:))
+        btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        updateStatusItem(running: 0, unread: 0, needsInput: 0)
+    }
+
+    /// Draws an ultra-crisp 18x18 monochrome template Lumi Ember bean silhouette
+    /// with punched-out asymmetric eyes & smile so macOS adapts it automatically to Light/Dark menu bars.
+    private func makeMenuBarEmberTemplateIcon() -> NSImage {
+        let size = NSSize(width: 18, height: 18)
+        let img = NSImage(size: size, flipped: true) { bounds in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let w: CGFloat = 14.0
+            let h: CGFloat = 14.6
+            let ox = (bounds.width - w) * 0.5
+            let oy = (bounds.height - h) * 0.5 + 0.3
+
+            func pt(_ nx: CGFloat, _ ny: CGFloat) -> CGPoint {
+                CGPoint(x: ox + nx * w, y: oy + ny * h)
+            }
+
+            let body = CGMutablePath()
+            body.move(to: pt(0.51, 0.00))
+            body.addCurve(to: pt(0.91, 0.22), control1: pt(0.71, 0.00), control2: pt(0.84, 0.09))
+            body.addCurve(to: pt(1.00, 0.54), control1: pt(0.98, 0.33), control2: pt(1.01, 0.44))
+            body.addCurve(to: pt(0.84, 0.85), control1: pt(0.99, 0.67), control2: pt(0.93, 0.77))
+            body.addCurve(to: pt(0.40, 1.00), control1: pt(0.73, 0.95), control2: pt(0.56, 1.01))
+            body.addCurve(to: pt(0.00, 0.74), control1: pt(0.18, 0.99), control2: pt(0.01, 0.90))
+            body.addCurve(to: pt(0.10, 0.40), control1: pt(-0.01, 0.60), control2: pt(0.07, 0.50))
+            body.addCurve(to: pt(0.20, 0.14), control1: pt(0.12, 0.28), control2: pt(0.14, 0.20))
+            body.addCurve(to: pt(0.51, 0.00), control1: pt(0.28, 0.04), control2: pt(0.39, 0.00))
+            body.closeSubpath()
+
+            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.addPath(body)
+            ctx.fillPath()
+
+            // Punch out signature asymmetric eyes + tilted goofy smile
+            ctx.setBlendMode(.clear)
+            let lEye = CGRect(x: pt(0.35, 0.45).x - 1.55, y: pt(0.35, 0.45).y - 1.55, width: 3.1, height: 3.1)
+            let rEye = CGRect(x: pt(0.68, 0.39).x - 1.95, y: pt(0.68, 0.39).y - 1.95, width: 3.9, height: 3.9)
+            ctx.fillEllipse(in: lEye)
+            ctx.fillEllipse(in: rEye)
+
+            let smile = CGMutablePath()
+            smile.move(to: pt(0.42, 0.68))
+            smile.addQuadCurve(to: pt(0.60, 0.65), control: pt(0.51, 0.78))
+            ctx.setLineWidth(1.25)
+            ctx.setLineCap(.round)
+            ctx.addPath(smile)
+            ctx.strokePath()
+
+            // Tiny solid pupils inside punched-out eyes
+            ctx.setBlendMode(.normal)
+            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.fillEllipse(in: CGRect(x: lEye.midX - 0.55, y: lEye.midY - 0.65, width: 1.35, height: 1.35))
+            ctx.fillEllipse(in: CGRect(x: rEye.midX - 0.85, y: rEye.midY - 0.60, width: 1.55, height: 1.55))
+
+            return true
+        }
+        img.isTemplate = true
+        return img
+    }
+
+    private func updateStatusItem(running: Int, unread: Int, needsInput: Int) {
+        guard let btn = statusItem?.button else { return }
+        var parts: [String] = []
+        if needsInput > 0 { parts.append("?\(needsInput)") }
+        if running > 0 { parts.append("⚡\(running)") }
+        if unread > 0 { parts.append("✓\(unread)") }
+        if store.isDNDActive { parts.append("☾") }
+
+        btn.image = menuBarEmberIcon
+        btn.imagePosition = parts.isEmpty ? .imageOnly : .imageLeading
+        btn.title = parts.isEmpty ? "" : " " + parts.joined(separator: " · ")
+        btn.toolTip = store.l10n.statusTooltip(
+            running: running,
+            unread: unread,
+            needsInput: needsInput,
+            dndRemaining: store.dndRemainingText
+        )
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+            return
+        }
+        togglePrimaryUI()
+    }
+
     private func showContextMenu() {
+        let t = store.l10n
         let menu = NSMenu()
-        let modeTitle = store.displayMode == .notch ? "切换为桌面悬浮看板" : "切换为刘海灵动岛"
+        let modeTitle = store.displayMode == .notch ? t.menuSwitchToFloating : t.menuSwitchToNotch
         let modeItem = NSMenuItem(title: modeTitle, action: #selector(menuSwitchMode), keyEquivalent: "")
         modeItem.target = self
         menu.addItem(modeItem)
 
-        let readItem = NSMenuItem(title: "全部标为已读", action: #selector(menuMarkAllRead), keyEquivalent: "")
+        let readItem = NSMenuItem(title: t.menuMarkAllRead, action: #selector(menuMarkAllRead), keyEquivalent: "")
         readItem.target = self
         menu.addItem(readItem)
 
-        let settingsItem = NSMenuItem(title: "设置…", action: #selector(menuOpenSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
+        // Do Not Disturb submenu
+        let dndMenu = NSMenu()
+        let dnd30 = NSMenuItem(title: t.menuDND30m, action: #selector(menuDND30m), keyEquivalent: "")
+        dnd30.target = self
+        dndMenu.addItem(dnd30)
+        let dnd60 = NSMenuItem(title: t.menuDND1h, action: #selector(menuDND1h), keyEquivalent: "")
+        dnd60.target = self
+        dndMenu.addItem(dnd60)
+        if store.isDNDActive {
+            dndMenu.addItem(.separator())
+            let dndOff = NSMenuItem(title: t.menuDNDOff, action: #selector(menuDNDOff), keyEquivalent: "")
+            dndOff.target = self
+            dndMenu.addItem(dndOff)
+        }
+        let dndParent = NSMenuItem(
+            title: store.dndRemainingText.map { "\(t.menuDNDTitle) (\($0))" } ?? t.menuDNDTitle,
+            action: nil,
+            keyEquivalent: ""
+        )
+        dndParent.submenu = dndMenu
+        menu.addItem(dndParent)
+
+        // Language submenu (instant live switch!)
+        let langMenu = NSMenu()
+        for lang in AppLanguage.allCases {
+            let item = NSMenuItem(title: lang.label(isEnglish: store.isEnglish), action: #selector(menuSelectLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = lang.rawValue
+            item.state = (store.appLanguage == lang) ? .on : .off
+            langMenu.addItem(item)
+        }
+        let langParent = NSMenuItem(title: t.menuLanguageTitle, action: nil, keyEquivalent: "")
+        langParent.submenu = langMenu
+        menu.addItem(langParent)
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "退出 Lumi", action: #selector(menuQuit), keyEquivalent: "q")
+        let settingsItem = NSMenuItem(title: t.menuSettings, action: #selector(menuOpenSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(title: t.menuQuit, action: #selector(menuQuit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -179,6 +314,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         switchMode(store.displayMode == .notch ? .floating : .notch)
     }
     @objc private func menuMarkAllRead() { store.markAllRead() }
+    @objc private func menuDND30m() { store.enableDND(minutes: 30) }
+    @objc private func menuDND1h() { store.enableDND(minutes: 60) }
+    @objc private func menuDNDOff() { store.disableDND() }
+    @objc private func menuSelectLanguage(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let lang = AppLanguage(rawValue: raw) {
+            store.appLanguage = lang
+        }
+    }
     @objc private func menuOpenSettings() { openSettings() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
 
@@ -254,17 +397,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func openSettings() {
         if let existing = settingsWindow {
+            existing.title = store.l10n.settingsWindowTitle
             NSApp.activate(ignoringOtherApps: true)
             existing.makeKeyAndOrderFront(nil)
             return
         }
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 516),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 572),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        win.title = "Lumi 设置"
+        win.title = store.l10n.settingsWindowTitle
         win.center()
         win.isReleasedWhenClosed = false
         win.contentView = NSHostingView(rootView: SettingsView(store: store))

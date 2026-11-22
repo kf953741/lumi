@@ -113,6 +113,8 @@ final class NotchWindowController: ObservableObject {
 
     func peekBrieflyForCompletion() {
         guard panel.isVisible, !isExpanded else { return }
+        if store.isDNDActive { return }
+        if store.hideAutoPeekInFullscreen && isActiveAppInFullscreen() { return }
         setExpanded(true)
         hoverCloseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -121,6 +123,36 @@ final class NotchWindowController: ObservableObject {
         }
         hoverCloseWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.6, execute: work)
+    }
+
+    /// Detects if the frontmost non-Lumi app owns a fullscreen window on the target screen
+    /// (covers macOS Spaces fullscreen, YouTube/Bilibili video fullscreen, and Keynote presentations).
+    private func isActiveAppInFullscreen() -> Bool {
+        guard let screen = targetScreen(),
+              let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              frontPID != ProcessInfo.processInfo.processIdentifier else {
+            return false
+        }
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        let sW = screen.frame.width
+        let sH = screen.frame.height
+        for info in list {
+            guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == frontPID,
+                  let layer = info[kCGWindowLayer as String] as? Int,
+                  layer == 0,
+                  let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+                  let w = boundsDict["Width"] as? CGFloat,
+                  let h = boundsDict["Height"] as? CGFloat else {
+                continue
+            }
+            if w >= sW - 6 && h >= sH - 6 {
+                return true
+            }
+        }
+        return false
     }
 
     func recomputeScreenGeometry(animated: Bool = true) {

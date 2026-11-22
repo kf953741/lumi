@@ -136,11 +136,13 @@ final class AntigravityScanner: @unchecked Sendable {
         let dbSaysRunning = (db.status == "CASCADE_RUN_STATUS_RUNNING") || db.notFullyIdle || (subCount > 0)
         let hookFresher = hook.map { $0.updatedAt.timeIntervalSince(db.lastModified) > 1.5 } ?? false
         let hookRunningRecent = hook.map { $0.state == "running" && now.timeIntervalSince($0.updatedAt) < 300 } ?? false
+        let hookNeedsInput = hook.map { $0.state == "needs_input" && now.timeIntervalSince($0.updatedAt) < 1200 } ?? false
 
-        // DB truth for "still running" ALWAYS wins: never let an interim Stop hook mark a
-        // conversation as done while Antigravity's DB still reports RUNNING or not_fully_idle.
+        // DB truth for "still running" ALWAYS wins unless the hook explicitly signals blocked on user approval/input.
         let status: SessionStatus
-        if dbSaysRunning {
+        if hookNeedsInput && (dbSaysRunning || hookFresher) {
+            status = .needsInput
+        } else if dbSaysRunning {
             status = .running
         } else if hookRunningRecent && hookFresher {
             status = .running
@@ -153,7 +155,9 @@ final class AntigravityScanner: @unchecked Sendable {
         }
 
         let action: String
-        if status == .running {
+        if status == .needsInput {
+            action = hook?.action.isEmpty == false ? (hook?.action ?? "等待你的审批或回复") : "等待你的审批或回复"
+        } else if status == .running {
             if let hook, !hook.action.isEmpty, hook.state == "running", now.timeIntervalSince(hook.updatedAt) < 120 {
                 action = hook.action
             } else if let subAction, !subAction.isEmpty {

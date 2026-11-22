@@ -251,14 +251,26 @@ struct NotchIslandView: View {
     }
 
     private var compactHeadline: String {
-        if store.totalRunningCount > 0 && store.totalUnreadCount > 0 { return "执行中 · 待查看" }
-        if store.totalRunningCount > 0 { return "\(store.totalRunningCount) 个对话执行中" }
-        if store.totalUnreadCount > 0 { return "\(store.totalUnreadCount) 个对话待查看" }
-        return "Lumi 盯盘中"
+        store.l10n.compactHeadline(
+            running: store.totalRunningCount,
+            unread: store.totalUnreadCount,
+            needsInput: store.totalNeedsInputCount
+        )
     }
 
     private var compactStatusBadge: some View {
         HStack(spacing: 5) {
+            if store.totalNeedsInputCount > 0 {
+                HStack(spacing: 2) {
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(LumiPalette.needsAmber)
+                    Text("\(store.totalNeedsInputCount)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(LumiPalette.emberGold)
+                }
+            }
             if store.totalRunningCount > 0 {
                 HStack(spacing: 3) {
                     TelemetryPulseBars(active: true, color: LumiPalette.runningIvory)
@@ -279,10 +291,16 @@ struct NotchIslandView: View {
                         .foregroundColor(LumiPalette.emberGold)
                 }
             }
-            if store.totalRunningCount == 0 && store.totalUnreadCount == 0 {
-                Circle()
-                    .fill(Color.white.opacity(0.28))
-                    .frame(width: 6, height: 6)
+            if store.totalRunningCount == 0 && store.totalUnreadCount == 0 && store.totalNeedsInputCount == 0 {
+                if store.isDNDActive {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(LumiPalette.warmSecondary)
+                } else {
+                    Circle()
+                        .fill(Color.white.opacity(0.28))
+                        .frame(width: 6, height: 6)
+                }
             }
         }
     }

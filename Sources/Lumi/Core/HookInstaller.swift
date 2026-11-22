@@ -104,13 +104,13 @@ enum HookInstaller {
 
     private static func installCodex() throws {
         let cmd = "\(commandPrefix) --agent codex"
-        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "Interrupt", "SessionEnd"]
+        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop", "Interrupt", "SessionEnd"]
         try mergeIntoGroupedHooks(at: codexHooksPath, events: events, command: cmd, matcher: nil)
     }
 
     private static func installClaude() throws {
         let cmd = "\(commandPrefix) --agent claude"
-        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop", "SessionEnd"]
         try mergeIntoGroupedHooks(at: claudeSettingsPath, events: events, command: cmd, matcher: nil)
     }
 

@@ -86,4 +86,31 @@ final class LumiCoreTests: XCTestCase {
         let writeOk = reader.query("INSERT INTO items VALUES ('a2', 'IDLE');") { _ in }
         XCTAssertFalse(writeOk)
     }
+
+    func testL10nTranslatesScannerActionsToEnglish() {
+        let en = L10n(isEnglish: true)
+        let zh = L10n(isEnglish: false)
+        XCTAssertEqual(en.action("编辑 ShadowPass.ts"), "Editing ShadowPass.ts")
+        XCTAssertEqual(en.action("收尾确认中…"), "Settling…")
+        XCTAssertEqual(en.action("等待你的审批或回复"), "Waiting for approval")
+        XCTAssertEqual(en.action("等待 2 个子 Agent 执行…"), "Waiting on 2 subagent(s)…")
+        XCTAssertEqual(zh.action("编辑 ShadowPass.ts"), "编辑 ShadowPass.ts")
+    }
+
+    func testCodexRolloutParserDetectsApprovalNeedsInput() {
+        let now = Date()
+        let lines = [
+            #"{"type":"event_msg","payload":{"type":"task_started","started_at":1770000000}}"#,
+            #"{"type":"event_msg","payload":{"type":"exec_approval_request","command":"rm -rf build"}}"#
+        ]
+        let parsed = CodexRolloutParser.parse(lines: lines, mtime: now, now: now)
+        XCTAssertEqual(parsed.status, .needsInput)
+    }
+
+    func testUpdateCheckerSemanticVersionComparison() {
+        XCTAssertTrue(UpdateChecker.isNewer("v1.3.0", than: "1.2.0"))
+        XCTAssertTrue(UpdateChecker.isNewer("2.0.0", than: "1.9.9"))
+        XCTAssertFalse(UpdateChecker.isNewer("v1.3.0", than: "1.3.0"))
+        XCTAssertFalse(UpdateChecker.isNewer("v1.2.9", than: "1.3.0"))
+    }
 }

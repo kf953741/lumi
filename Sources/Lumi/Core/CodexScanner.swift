@@ -72,6 +72,13 @@ public enum CodexRolloutParser {
                     status = .canceled
                     currentAction = "已手动停止"
                     completedAt = parseISO(obj["timestamp"] as? String) ?? mtime
+                } else if ptype == "exec_approval_request"
+                            || ptype == "apply_patch_approval_request"
+                            || ptype == "request_user_input"
+                            || ptype == "elicitation_request" {
+                    status = .needsInput
+                    completedAt = nil
+                    currentAction = "等待你的审批或回复"
                 } else if ptype == "item_completed" {
                     if status != .done && status != .canceled {
                         status = .running
@@ -263,6 +270,7 @@ final class CodexScanner: @unchecked Sendable {
             }
         }
 
+        let hookMap = LiveHookRecord.loadAll(forAgent: "codex")
         var sessions: [AgentSession] = []
         for th in threads {
             let srcLow = th.source.lowercased()
@@ -290,10 +298,21 @@ final class CodexScanner: @unchecked Sendable {
             let title = ProjectNameHelper.cleanOneLine(rawTitle, maxLength: 78)
 
             var status = snap?.status ?? .done
-            if subCount > 0 && status != .running { status = .running }
+            let hook = hookMap[th.id]
+            if let hook, hook.state == "needs_input",
+               now.timeIntervalSince(hook.updatedAt) < 1200,
+               hook.updatedAt.timeIntervalSince(effectiveMtime) > -5 {
+                status = .needsInput
+            } else if subCount > 0 && status != .running && status != .needsInput {
+                status = .running
+            }
 
             let action: String
-            if status == .running {
+            if status == .needsInput {
+                if let h = hook, !h.action.isEmpty, h.state == "needs_input" { action = h.action }
+                else if let a = snap?.currentAction, !a.isEmpty { action = a }
+                else { action = "等待你的审批或回复" }
+            } else if status == .running {
                 if let a = snap?.currentAction, !a.isEmpty { action = a }
                 else if subCount > 0 { action = "等待 \(subCount) 个子 Agent 执行…" }
                 else { action = "思考与执行中…" }

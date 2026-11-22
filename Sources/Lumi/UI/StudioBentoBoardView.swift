@@ -1,40 +1,50 @@
 import AppKit
 import SwiftUI
 
-/// Balanced smoked frosted glass backdrop: soft native behind-window blur
-/// with rich obsidian tint so white typography stays razor-sharp even over bright webpages.
+/// Balanced frosted glass backdrop supporting both Warm Charcoal (dark)
+/// and Morning Oat Cream (light) floating surfaces.
 struct LiquidGlassBackdrop: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
+    var isLight: Bool = false
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = .behindWindow
         view.state = .active
-        view.appearance = NSAppearance(named: .darkAqua)
+        view.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
         return view
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
         nsView.blendingMode = .behindWindow
-        nsView.appearance = NSAppearance(named: .darkAqua)
+        nsView.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
     }
 }
 
 enum BentoListTab: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case running = "执行中"
-    case unread = "待查看"
+    case all
+    case running
+    case unread
 
     var id: String { rawValue }
+
+    func label(_ l10n: L10n) -> String {
+        switch self {
+        case .all:     return l10n.tabAll
+        case .running: return l10n.tabRunning
+        case .unread:  return l10n.tabUnread
+        }
+    }
 }
 
-/// Apple Liquid Glass × Studio Bento board shared by Dynamic Notch Expanded
-/// and the Detachable Floating Desktop Window.
+/// Studio Bento board shared by Dynamic Notch Expanded (Warm Charcoal)
+/// and the Detachable Floating Desktop Window (Warm Charcoal or Morning Oat Light).
 struct StudioBentoBoardView: View {
     @ObservedObject var store: MonitorStore
     let inNotch: Bool
+    var surface: BoardSurfaceTheme = .charcoal
     let lookOffset: CGSize
     let onSwitchMode: () -> Void
     let onOpenSettings: () -> Void
@@ -44,13 +54,11 @@ struct StudioBentoBoardView: View {
     @State private var activeTab: BentoListTab = .all
     @State private var showRecent = false
 
-    // Rich tactile Warm Charcoal Bento glass fills (subtle translucency + WCAG AAA warm-white text contrast)
+    private var t: L10n { store.l10n }
+
     private var glassCardFill: LinearGradient {
         LinearGradient(
-            colors: [
-                LumiPalette.cardTop.opacity(0.88),
-                LumiPalette.cardBottom.opacity(0.92)
-            ],
+            colors: [surface.cardTop, surface.cardBottom],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -66,9 +74,9 @@ struct StudioBentoBoardView: View {
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
                         telemetryTile(
-                            number: store.totalRunningCount,
-                            label: "执行中",
-                            accent: LumiPalette.runningIvory,
+                            number: store.totalRunningCount + store.totalNeedsInputCount,
+                            label: t.tabRunning,
+                            accent: surface.runningTone,
                             isRunningTile: true,
                             isSelected: activeTab == .running
                         ) {
@@ -79,8 +87,8 @@ struct StudioBentoBoardView: View {
 
                         telemetryTile(
                             number: store.totalUnreadCount,
-                            label: "待查看",
-                            accent: LumiPalette.emberGold,
+                            label: t.tabUnread,
+                            accent: surface.emberHighlight,
                             isRunningTile: false,
                             isSelected: activeTab == .unread
                         ) {
@@ -96,7 +104,7 @@ struct StudioBentoBoardView: View {
                 }
             }
 
-            // MARK: - Bottom Unified Warm Charcoal Task Card
+            // MARK: - Bottom Unified Task Card
             taskListModule
         }
         .padding(.horizontal, 12)
@@ -108,62 +116,58 @@ struct StudioBentoBoardView: View {
 
     private var stageGlowMultiplier: Double {
         switch store.mascotMood {
-        case .celebrating: return 1.38
-        case .sleeping:    return 0.50
-        default:           return 1.0
+        case .celebrating, .needsInput: return 1.38
+        case .sleeping:                 return 0.50
+        default:                        return 1.0
         }
     }
 
     private var mascotStageModule: some View {
-        ZStack {
+        let highlightRim = (store.mascotMood == .celebrating || store.mascotMood == .needsInput)
+        return ZStack {
             RoundedRectangle(cornerRadius: 17, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [
-                            LumiPalette.stageTop.opacity(0.94),
-                            LumiPalette.stageBottom.opacity(0.96)
-                        ],
+                        colors: [surface.stageTop, surface.stageBottom],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
                 .overlay(
                     RadialGradient(
-                        colors: [
-                            store.mascotTheme.bodyTop.opacity(0.24 * stageGlowMultiplier),
-                            store.mascotTheme.bodyBottom.opacity(0.08 * stageGlowMultiplier),
-                            Color.clear
-                        ],
-                        center: UnitPoint(x: 0.5, y: 0.48),
+                        colors: surface.isLight
+                            ? [Color.white.opacity(0.62), Color.clear]
+                            : [
+                                store.mascotTheme.bodyTop.opacity(0.24 * stageGlowMultiplier),
+                                store.mascotTheme.bodyBottom.opacity(0.08 * stageGlowMultiplier),
+                                Color.clear
+                            ],
+                        center: UnitPoint(x: 0.5, y: surface.isLight ? 0.40 : 0.48),
                         startRadius: 4,
                         endRadius: 72
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                 )
                 .overlay(
-                    // Soft warm floor reflection grounding Lumi Ember in the hearth stage
                     Ellipse()
                         .fill(
-                            RadialGradient(
-                                colors: [store.mascotTheme.eyeGlow.opacity(0.18 * stageGlowMultiplier), Color.clear],
-                                center: .center,
-                                startRadius: 2,
-                                endRadius: 40
-                            )
+                            surface.isLight
+                                ? RadialGradient(colors: [Color(red: 0.70, green: 0.44, blue: 0.26).opacity(0.16), Color.clear], center: .center, startRadius: 2, endRadius: 34)
+                                : RadialGradient(colors: [store.mascotTheme.eyeGlow.opacity(0.18 * stageGlowMultiplier), Color.clear], center: .center, startRadius: 2, endRadius: 40)
                         )
-                        .frame(width: 82, height: 16)
+                        .frame(width: surface.isLight ? 56 : 82, height: surface.isLight ? 10 : 16)
                         .offset(y: 23)
                 )
                 .overlay(
-                    store.mascotMood == .celebrating
+                    highlightRim
                         ? AnyView(
                             RoundedRectangle(cornerRadius: 17, style: .continuous)
                                 .strokeBorder(
                                     LinearGradient(
                                         colors: [
-                                            LumiPalette.emberOrange.opacity(0.75),
-                                            LumiPalette.emberGold.opacity(0.35),
-                                            LumiPalette.emberOrange.opacity(0.55)
+                                            surface.emberAccent.opacity(0.72),
+                                            surface.emberHighlight.opacity(0.35),
+                                            surface.emberAccent.opacity(0.55)
                                         ],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing
@@ -171,7 +175,7 @@ struct StudioBentoBoardView: View {
                                     lineWidth: 1.15
                                 )
                         )
-                        : AnyView(liquidGlassRim(cornerRadius: 17, topIntensity: 0.24))
+                        : AnyView(surfaceRim(cornerRadius: 17))
                 )
 
             VStack(spacing: 3) {
@@ -185,31 +189,20 @@ struct StudioBentoBoardView: View {
                     isActiveSurface: true,
                     onPoke: { store.pokeMascot() }
                 )
-                .help("点 Lumi 互动（连戳 4 下会晕哦）")
+                .help(t.helpPokeMascot)
 
-                Text(shortStageCaption)
+                Text(t.stageCaption(for: store.mascotMood))
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(LumiPalette.warmSecondary)
+                    .foregroundColor(surface.isLight ? Color(red: 0.42, green: 0.31, blue: 0.24) : surface.secondaryText)
                     .lineLimit(1)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 9)
             }
         }
+        .shadow(color: surface.isLight ? Color(red: 0.50, green: 0.38, blue: 0.26).opacity(0.07) : .clear, radius: 5, y: 2)
     }
 
-    private var shortStageCaption: String {
-        switch store.mascotMood {
-        case .dizzy: return "转晕啦 @ @"
-        case .poked: return "嘿嘿在盯盘~"
-        case .celebrating: return "有对话完工啦!"
-        case .error: return "发现执行出错"
-        case .working: return "Lumi 盯盘中"
-        case .waitingUnread: return "等你查看哟"
-        case .sleeping: return "全部空闲 · Zzz"
-        }
-    }
-
-    // MARK: - Translucent Big-Number Telemetry Tile
+    // MARK: - Big-Number Telemetry Tile
 
     private func telemetryTile(
         number: Int,
@@ -226,22 +219,22 @@ struct StudioBentoBoardView: View {
                     .monospacedDigit()
                     .foregroundColor(
                         number > 0
-                            ? (isRunningTile ? LumiPalette.warmPrimary : accent)
-                            : LumiPalette.warmSubtle.opacity(0.65)
+                            ? (isRunningTile ? surface.primaryText : accent)
+                            : surface.subtleText.opacity(0.65)
                     )
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
                     if isRunningTile {
-                        TelemetryPulseBars(active: number > 0, color: LumiPalette.runningIvory)
+                        TelemetryPulseBars(active: number > 0, color: surface.runningTone)
                     } else {
                         Circle()
-                            .fill(number > 0 ? LumiPalette.emberOrange : Color.white.opacity(0.22))
+                            .fill(number > 0 ? surface.emberAccent : surface.subtleText.opacity(0.35))
                             .frame(width: 6, height: 6)
                     }
                     Text(label)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(LumiPalette.warmSecondary)
+                        .foregroundColor(surface.secondaryText)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -255,7 +248,7 @@ struct StudioBentoBoardView: View {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .fill(
                                 RadialGradient(
-                                    colors: [LumiPalette.emberOrange.opacity(0.11), Color.clear],
+                                    colors: [surface.emberAccent.opacity(surface.isLight ? 0.10 : 0.11), Color.clear],
                                     center: .topLeading,
                                     startRadius: 2,
                                     endRadius: 85
@@ -264,7 +257,7 @@ struct StudioBentoBoardView: View {
                     }
                     if isSelected {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill((isRunningTile ? LumiPalette.runningIvory : LumiPalette.emberOrange).opacity(0.14))
+                            .fill((isRunningTile ? surface.runningTone : surface.emberAccent).opacity(0.13))
                     }
                 }
             )
@@ -273,93 +266,113 @@ struct StudioBentoBoardView: View {
                     .strokeBorder(
                         isSelected
                             ? LinearGradient(colors: [accent.opacity(0.60), accent.opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            : liquidGlassGradient(topIntensity: 0.22),
+                            : LinearGradient(colors: surface.rimColors, startPoint: .topLeading, endPoint: .bottomTrailing),
                         lineWidth: isSelected ? 1.0 : 0.75
                     )
             )
+            .shadow(color: surface.isLight ? Color(red: 0.50, green: 0.40, blue: 0.30).opacity(0.06) : .clear, radius: 5, y: 2)
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Slim Glass Control Strip
+    // MARK: - Slim Control Strip
 
     private var controlStripModule: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Button(action: onSwitchMode) {
-                HStack(spacing: 5) {
+                HStack(spacing: 4.5) {
                     Image(systemName: inNotch ? "pip.exit" : "macbook")
-                        .font(.system(size: 10.5, weight: .semibold))
-                    Text(inNotch ? "桌面模式" : "回到刘海")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.2, weight: .semibold))
+                    Text(inNotch ? t.desktopMode : t.dockToNotch)
+                        .font(.system(size: 10.8, weight: .medium))
                 }
-                .foregroundColor(Color.white.opacity(0.90))
-                .padding(.horizontal, 9)
+                .foregroundColor(surface.primaryText.opacity(0.92))
+                .padding(.horizontal, 8.5)
                 .frame(height: 24)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.10))
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                        .fill(surface.pillBg)
+                        .overlay(Capsule().strokeBorder(surface.divider, lineWidth: 0.5))
                 )
             }
             .buttonStyle(.plain)
-            .help(inNotch ? "切换为可拖动的桌面悬浮看板" : "收回 MacBook 刘海灵动岛")
+            .help(inNotch ? t.helpDesktopMode : t.helpDockToNotch)
 
             Spacer(minLength: 2)
 
+            if store.isDNDActive {
+                stripIconButton(
+                    icon: "moon.zzz.fill",
+                    active: true,
+                    help: t.helpDndActive
+                ) { store.disableDND() }
+            }
+
             if !inNotch {
+                stripIconButton(
+                    icon: surface.isLight ? "moon.fill" : "sun.max.fill",
+                    active: false,
+                    help: t.helpSwitchAppearance
+                ) {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        store.floatingAppearance = (store.floatingAppearance == .oatLight) ? .charcoal : .oatLight
+                    }
+                }
+
                 stripIconButton(
                     icon: store.alwaysOnTop ? "pin.fill" : "pin",
                     active: store.alwaysOnTop,
-                    help: store.alwaysOnTop ? "已置顶（跨桌面跟随）" : "置顶窗口"
+                    help: store.alwaysOnTop ? t.helpPinnedOn : t.helpPinnedOff
                 ) { store.alwaysOnTop.toggle() }
             }
 
             stripIconButton(
                 icon: store.soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
                 active: store.soundEnabled,
-                help: store.soundEnabled ? "完成提示音已开" : "完成提示音已关"
+                help: store.soundEnabled ? t.helpSoundOn : t.helpSoundOff
             ) { store.soundEnabled.toggle() }
 
             stripIconButton(
                 icon: "gearshape.fill",
                 active: false,
-                help: "打开 Lumi 设置"
+                help: t.helpSettings
             ) { onOpenSettings() }
 
             if let onHide {
                 stripIconButton(
                     icon: "xmark",
                     active: false,
-                    help: "收起到菜单栏"
+                    help: t.helpHide
                 ) { onHide() }
             }
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(glassCardFill))
-        .overlay(liquidGlassRim(cornerRadius: 12, topIntensity: 0.24))
+        .overlay(surfaceRim(cornerRadius: 12))
+        .shadow(color: surface.isLight ? Color(red: 0.50, green: 0.40, blue: 0.30).opacity(0.05) : .clear, radius: 4, y: 1.5)
     }
 
     private func stripIconButton(icon: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(active ? store.mascotTheme.eyeGlow : LumiPalette.warmSecondary)
-                .frame(width: 24, height: 22)
+                .font(.system(size: 10.8, weight: .medium))
+                .foregroundColor(active ? surface.emberHighlight : surface.secondaryText)
+                .frame(width: 23, height: 22)
                 .background(
                     Circle()
-                        .fill(active ? store.mascotTheme.bodyTop.opacity(0.18) : Color.clear)
+                        .fill(active ? surface.emberAccent.opacity(surface.isLight ? 0.14 : 0.18) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
         .help(help)
     }
 
-    // MARK: - Bottom Unified Liquid Glass Task List
+    // MARK: - Bottom Unified Task List
 
     private var taskListModule: some View {
         VStack(spacing: 0) {
-            // Segmented Glass Tabs + Compact Platform Filter + Mark All Read
+            // Segmented Tabs + Agent Filter + Mark All Read
             HStack(spacing: 6) {
                 HStack(spacing: 2) {
                     ForEach(BentoListTab.allCases) { tab in
@@ -367,23 +380,23 @@ struct StudioBentoBoardView: View {
                             withAnimation(.easeInOut(duration: 0.15)) { activeTab = tab }
                         } label: {
                             HStack(spacing: 3.5) {
-                                Text(tab.rawValue)
-                                    .font(.system(size: 11, weight: activeTab == tab ? .semibold : .medium))
+                                Text(tab.label(t))
+                                    .font(.system(size: 10.8, weight: activeTab == tab ? .semibold : .medium))
                                 if tab == .unread && store.unreadCompletedSessions.count > 0 {
                                     Text("\(store.unreadCompletedSessions.count)")
-                                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                                        .foregroundColor(Color(red: 1.0, green: 0.80, blue: 0.30))
+                                        .font(.system(size: 9.2, weight: .bold, design: .rounded))
+                                        .foregroundColor(surface.emberHighlight)
                                 }
                             }
-                            .foregroundColor(activeTab == tab ? Color.white : Color.white.opacity(0.56))
-                            .padding(.horizontal, 9.5)
+                            .foregroundColor(activeTab == tab ? surface.primaryText : surface.secondaryText)
+                            .padding(.horizontal, 9)
                             .padding(.vertical, 4.5)
                             .background(
                                 Capsule()
-                                    .fill(activeTab == tab ? Color.white.opacity(0.16) : Color.clear)
+                                    .fill(activeTab == tab ? surface.segmentedActive : Color.clear)
                                     .overlay(
                                         Capsule().strokeBorder(
-                                            activeTab == tab ? Color.white.opacity(0.22) : Color.clear,
+                                            activeTab == tab ? surface.divider : Color.clear,
                                             lineWidth: 0.5
                                         )
                                     )
@@ -393,7 +406,7 @@ struct StudioBentoBoardView: View {
                     }
                 }
                 .padding(2)
-                .background(Capsule().fill(Color.black.opacity(0.20)))
+                .background(Capsule().fill(surface.segmentedTrack))
 
                 Spacer(minLength: 4)
 
@@ -403,25 +416,25 @@ struct StudioBentoBoardView: View {
                             store.selectedFilter = f
                         } label: {
                             HStack {
-                                Text(f.rawValue)
+                                Text(f.label(isEnglish: store.isEnglish))
                                 if store.selectedFilter == f { Image(systemName: "checkmark") }
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 3) {
-                        Text(store.selectedFilter == .all ? "全平台" : store.selectedFilter.rawValue)
-                            .font(.system(size: 10.5, weight: .medium))
+                        Text(store.selectedFilter == .all ? t.allAgents : store.selectedFilter.label(isEnglish: store.isEnglish))
+                            .font(.system(size: 10.2, weight: .medium))
                         Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8.5, weight: .semibold))
+                            .font(.system(size: 8.2, weight: .semibold))
                     }
-                    .foregroundColor(Color.white.opacity(0.66))
+                    .foregroundColor(surface.secondaryText)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(
                         Capsule()
-                            .fill(Color.white.opacity(0.08))
-                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                            .fill(surface.pillBg)
+                            .overlay(Capsule().strokeBorder(surface.divider, lineWidth: 0.5))
                     )
                 }
                 .menuStyle(.borderlessButton)
@@ -431,38 +444,60 @@ struct StudioBentoBoardView: View {
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) { store.markAllRead() }
                     } label: {
-                        Text("全部已读")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundColor(LumiPalette.emberGold)
+                        Text(t.markAllRead)
+                            .font(.system(size: 10.2, weight: .semibold))
+                            .foregroundColor(surface.emberHighlight)
                     }
                     .buttonStyle(.plain)
-                    .padding(.leading, 4)
+                    .padding(.leading, 3)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
 
             Rectangle()
-                .fill(LumiPalette.warmDivider)
+                .fill(surface.divider)
                 .frame(height: 0.5)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     let showRunning = (activeTab == .all || activeTab == .running)
                     let showUnread = (activeTab == .all || activeTab == .unread)
+                    let needsInput = store.needsInputSessions
+
+                    if showRunning && !needsInput.isEmpty {
+                        subtleGroupHeader(t.groupNeedsInput, accent: true)
+                        ForEach(needsInput) { s in
+                            BentoSessionRow(
+                                session: s,
+                                nowRef: store.lastRefreshAt,
+                                surface: surface,
+                                l10n: t,
+                                onOpen: {
+                                    if store.openSession(s) {
+                                        onDidJump?()
+                                    }
+                                },
+                                onMarkRead: nil
+                            )
+                        }
+                    }
 
                     if showRunning {
                         let running = store.runningSessions
                         if activeTab == .all && !running.isEmpty {
-                            subtleGroupHeader("正在执行")
+                            subtleGroupHeader(t.groupRunning)
+                                .padding(.top, needsInput.isEmpty ? 0 : 6)
                         }
-                        if running.isEmpty && activeTab == .running {
-                            emptyState("当前没有正在执行的对话")
+                        if running.isEmpty && needsInput.isEmpty && activeTab == .running {
+                            emptyState(t.emptyRunning)
                         } else {
                             ForEach(Array(running.enumerated()), id: \.element.id) { idx, s in
                                 BentoSessionRow(
                                     session: s,
                                     nowRef: store.lastRefreshAt,
+                                    surface: surface,
+                                    l10n: t,
                                     onOpen: {
                                         if store.openSession(s) {
                                             onDidJump?()
@@ -480,15 +515,17 @@ struct StudioBentoBoardView: View {
                     if showUnread {
                         let unread = store.unreadCompletedSessions
                         if activeTab == .all && !unread.isEmpty {
-                            subtleGroupHeader("待查看 · 点击跳转即已读")
-                                .padding(.top, store.runningSessions.isEmpty ? 0 : 6)
+                            subtleGroupHeader(t.groupUnread)
+                                .padding(.top, (store.runningSessions.isEmpty && needsInput.isEmpty) ? 0 : 6)
                         }
                         if unread.isEmpty && activeTab == .unread {
-                            emptyState("暂无未读的独立对话完成项")
+                            emptyState(t.emptyUnread)
                         } else {
                             ForEach(unread) { s in
                                 BentoSessionRow(
                                     session: s,
+                                    surface: surface,
+                                    l10n: t,
                                     onOpen: {
                                         let jumped = store.openSession(s)
                                         if jumped {
@@ -504,8 +541,8 @@ struct StudioBentoBoardView: View {
                         }
                     }
 
-                    if activeTab == .all && store.runningSessions.isEmpty && store.unreadCompletedSessions.isEmpty {
-                        emptyState("所有对话都已处理完毕，Lumi 正在打盹…")
+                    if activeTab == .all && needsInput.isEmpty && store.runningSessions.isEmpty && store.unreadCompletedSessions.isEmpty {
+                        emptyState(t.emptyAll)
                     }
 
                     if activeTab == .all && !store.recentReadSessions.isEmpty {
@@ -515,11 +552,11 @@ struct StudioBentoBoardView: View {
                             HStack(spacing: 5) {
                                 Image(systemName: showRecent ? "chevron.down" : "chevron.right")
                                     .font(.system(size: 8.5, weight: .semibold))
-                                Text("最近已读 (\(store.recentReadSessions.count))")
+                                Text(t.recentlyRead(store.recentReadSessions.count))
                                     .font(.system(size: 10.5, weight: .medium))
                                 Spacer()
                             }
-                            .foregroundColor(Color.white.opacity(0.42))
+                            .foregroundColor(surface.subtleText)
                             .padding(.horizontal, 12)
                             .padding(.top, 10)
                             .padding(.bottom, 4)
@@ -532,6 +569,8 @@ struct StudioBentoBoardView: View {
                                 BentoSessionRow(
                                     session: s,
                                     compact: true,
+                                    surface: surface,
+                                    l10n: t,
                                     onOpen: {
                                         if store.openSession(s) {
                                             onDidJump?()
@@ -551,41 +590,42 @@ struct StudioBentoBoardView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11))
-                        .foregroundColor(Color(red: 1.0, green: 0.76, blue: 0.26))
+                        .foregroundColor(surface.emberHighlight)
                     Text(hint)
                         .font(.system(size: 10.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.90))
+                        .foregroundColor(surface.primaryText.opacity(0.90))
                         .lineLimit(2)
                     Spacer(minLength: 4)
-                    Button("前往授权") {
+                    Button(t.grantAccessibility) {
                         store.dismissJumpHint()
                         store.requestAccessibilityPermission()
                     }
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.black)
+                    .foregroundColor(surface.ctaText)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Color(red: 1.0, green: 0.78, blue: 0.30)))
+                    .background(Capsule().fill(surface.ctaFill))
                     .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 11)
                 .padding(.vertical, 8)
-                .background(Color(red: 1.0, green: 0.68, blue: 0.18).opacity(0.16))
+                .background(surface.emberAccent.opacity(0.14))
                 .overlay(alignment: .top) {
-                    Rectangle().fill(Color(red: 1.0, green: 0.76, blue: 0.26).opacity(0.32)).frame(height: 0.5)
+                    Rectangle().fill(surface.emberAccent.opacity(0.30)).frame(height: 0.5)
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 17, style: .continuous).fill(glassCardFill))
-        .overlay(liquidGlassRim(cornerRadius: 17, topIntensity: 0.26))
+        .overlay(surfaceRim(cornerRadius: 17))
+        .shadow(color: surface.isLight ? Color(red: 0.50, green: 0.40, blue: 0.30).opacity(0.06) : .clear, radius: 6, y: 2)
     }
 
-    private func subtleGroupHeader(_ text: String) -> some View {
+    private func subtleGroupHeader(_ text: String, accent: Bool = false) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(LumiPalette.warmSubtle)
+            .font(.system(size: 9.8, weight: .semibold))
+            .foregroundColor(accent ? surface.emberHighlight : surface.subtleText)
             .padding(.horizontal, 12)
             .padding(.top, 5)
             .padding(.bottom, 2)
@@ -593,7 +633,7 @@ struct StudioBentoBoardView: View {
 
     private var rowDivider: some View {
         Rectangle()
-            .fill(LumiPalette.warmDivider)
+            .fill(surface.divider)
             .frame(height: 0.5)
             .padding(.leading, 51)
             .padding(.trailing, 12)
@@ -602,26 +642,16 @@ struct StudioBentoBoardView: View {
     private func emptyState(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11.5))
-            .foregroundColor(LumiPalette.warmSubtle)
+            .foregroundColor(surface.subtleText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 28)
     }
 
-    private func liquidGlassGradient(topIntensity: Double) -> LinearGradient {
-        LinearGradient(
-            colors: [
-                LumiPalette.champagneRim.opacity(topIntensity),
-                LumiPalette.champagneRim.opacity(topIntensity * 0.34),
-                Color.white.opacity(0.03),
-                LumiPalette.emberGold.opacity(topIntensity * 0.38)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private func liquidGlassRim(cornerRadius: CGFloat, topIntensity: Double) -> some View {
+    private func surfaceRim(cornerRadius: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .strokeBorder(liquidGlassGradient(topIntensity: topIntensity), lineWidth: 0.75)
+            .strokeBorder(
+                LinearGradient(colors: surface.rimColors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: 0.75
+            )
     }
 }

@@ -5,24 +5,28 @@ struct SettingsView: View {
     @ObservedObject var store: MonitorStore
     @State private var selectedTab = 0
     @State private var hookMessage: String? = nil
+    @State private var checkingUpdate = false
+    @State private var updateResult: UpdateCheckResult? = nil
+
+    private var t: L10n { store.l10n }
 
     var body: some View {
         VStack(spacing: 0) {
             TabView(selection: $selectedTab) {
                 generalTab
-                    .tabItem { Label("通用与形态", systemImage: "macbook") }
+                    .tabItem { Label(t.settingsTabGeneral, systemImage: "macbook") }
                     .tag(0)
 
                 mascotTab
-                    .tabItem { Label("Lumi 萌宠", systemImage: "sparkles") }
+                    .tabItem { Label(t.settingsTabMascot, systemImage: "sparkles") }
                     .tag(1)
 
                 agentsTab
-                    .tabItem { Label("AI 工具接入", systemImage: "cpu") }
+                    .tabItem { Label(t.settingsTabAgents, systemImage: "cpu") }
                     .tag(2)
 
                 alertsTab
-                    .tabItem { Label("通知与音效", systemImage: "bell.badge") }
+                    .tabItem { Label(t.settingsTabAlerts, systemImage: "bell.badge") }
                     .tag(3)
             }
             .padding(.top, 6)
@@ -30,14 +34,14 @@ struct SettingsView: View {
             Divider()
 
             HStack {
-                Text("Lumi v1.2.0 · MIT License")
+                Text("Lumi v\(UpdateChecker.currentAppVersion) · MIT License")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(role: .destructive) {
                     NSApp.terminate(nil)
                 } label: {
-                    Label("退出 Lumi", systemImage: "power")
+                    Label(t.menuQuit, systemImage: "power")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.bordered)
@@ -49,48 +53,111 @@ struct SettingsView: View {
             .padding(.vertical, 10)
             .background(Color(NSColor.windowBackgroundColor))
         }
-        .frame(width: 560, height: 516)
+        .frame(width: 580, height: 572)
     }
 
     // MARK: - General
 
     private var generalTab: some View {
         Form {
-            Section("显示形态") {
-                Picker("主界面模式", selection: $store.displayMode) {
+            Section(t.secDisplayMode) {
+                Picker(t.lblPrimaryMode, selection: $store.displayMode) {
                     ForEach(DisplayMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+                        Text(mode.label(isEnglish: store.isEnglish)).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
 
                 if store.displayMode == .notch {
-                    Toggle("鼠标悬停刘海自动展开面板", isOn: $store.hoverToExpand)
-                    Picker("灵动岛显示屏幕", selection: $store.selectedScreenName) {
-                        Text("自动（优先 MacBook 刘海屏）").tag("auto")
+                    Toggle(t.lblHoverExpand, isOn: $store.hoverToExpand)
+                    Toggle(t.lblFullscreenHide, isOn: $store.hideAutoPeekInFullscreen)
+                    Picker(t.lblTargetScreen, selection: $store.selectedScreenName) {
+                        Text(t.lblAutoScreen).tag("auto")
                         ForEach(NSScreen.screens, id: \.localizedName) { screen in
                             Text(screen.localizedName).tag(screen.localizedName)
                         }
                     }
                 } else {
-                    Toggle("悬浮看板始终置顶（跨桌面 Space 跟随）", isOn: $store.alwaysOnTop)
+                    Toggle(t.lblAlwaysOnTop, isOn: $store.alwaysOnTop)
+                    Picker(t.lblFloatingAppearance, selection: $store.floatingAppearance) {
+                        ForEach(FloatingAppearance.allCases) { style in
+                            Text(style.label(isEnglish: store.isEnglish)).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
             }
 
-            Section("会话过滤与启动") {
-                Toggle("隐藏后台 CLI 批处理任务（只看独立桌面对话）", isOn: $store.hideCLISessions)
-                Toggle("登录 macOS 时自动启动 Lumi", isOn: $store.launchAtLogin)
+            Section(t.secBehavior) {
+                Picker(t.lblLanguage, selection: $store.appLanguage) {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Text(lang.label(isEnglish: store.isEnglish)).tag(lang)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Picker(t.lblGlobalHotkey, selection: $store.hotKeyPreset) {
+                    ForEach(GlobalHotKeyPreset.allCases) { preset in
+                        Text(preset.label(isEnglish: store.isEnglish)).tag(preset)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Toggle(t.lblHideCLI, isOn: $store.hideCLISessions)
+                Toggle(t.lblLaunchAtLogin, isOn: $store.launchAtLogin)
             }
 
-            Section("开源项目信息") {
+            Section(t.secAbout) {
                 HStack {
-                    Text("Lumi v1.2.0 · MIT License")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Lumi v\(UpdateChecker.currentAppVersion) · MIT License")
+                            .font(.system(size: 12, weight: .medium))
+                        Text(t.lblLocalOnly)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
-                    Text("100% 本地运行 · 零云端上传")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(.secondary)
+
+                    if checkingUpdate {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(t.btnCheckingUpdates).font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                    } else if case let .updateAvailable(tag, url) = updateResult {
+                        HStack(spacing: 8) {
+                            Text(t.updateAvailable(tag))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(LumiPalette.emberOrange)
+                            Button(t.btnDownloadUpdate) {
+                                NSWorkspace.shared.open(url)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            if case let .upToDate(ver) = updateResult {
+                                Text(t.updateUpToDate(ver))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            } else if case .failed = updateResult {
+                                Text(t.updateCheckFailed)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.orange)
+                            }
+                            Button(t.btnCheckUpdates) {
+                                checkingUpdate = true
+                                Task {
+                                    let res = await UpdateChecker.checkLatest()
+                                    await MainActor.run {
+                                        checkingUpdate = false
+                                        updateResult = res
+                                    }
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
                 }
             }
         }
@@ -102,7 +169,6 @@ struct SettingsView: View {
 
     private var mascotTab: some View {
         VStack(spacing: 18) {
-            // Interactive Warm Hearth Preview
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(
@@ -138,23 +204,22 @@ struct SettingsView: View {
                     )
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("你好，我是 Lumi！")
+                        Text(t.mascotGreeting)
                             .font(.system(size: 17, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(LumiPalette.warmPrimary)
                         Text(store.mascotStatusText)
                             .font(.system(size: 12.5))
-                            .foregroundColor(.white.opacity(0.72))
-                        Text("提示：直接点我试试互动，连续戳 4 下我会转晕哦")
+                            .foregroundColor(LumiPalette.warmSecondary)
+                        Text(t.mascotPokeTip)
                             .font(.system(size: 11))
-                            .foregroundColor(store.mascotTheme.eyeGlow.opacity(0.85))
+                            .foregroundColor(store.mascotTheme.eyeGlow.opacity(0.90))
                     }
                 }
                 .padding(.horizontal, 24)
             }
 
-            // Theme Picker Grid
             VStack(alignment: .leading, spacing: 10) {
-                Text("外观配色")
+                Text(t.mascotPaletteTitle)
                     .font(.system(size: 13, weight: .semibold))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                     ForEach(MascotTheme.allCases) { theme in
@@ -168,7 +233,7 @@ struct SettingsView: View {
                                     .fill(LinearGradient(colors: [theme.bodyTop, theme.bodyBottom], startPoint: .topLeading, endPoint: .bottomTrailing))
                                     .frame(width: 22, height: 22)
                                     .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
-                                Text(theme.displayName)
+                                Text(theme.localizedName(isEnglish: store.isEnglish))
                                     .font(.system(size: 12, weight: store.mascotTheme == theme ? .semibold : .regular))
                                 Spacer()
                                 if store.mascotTheme == theme {
@@ -203,18 +268,18 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("一键接入 AI 编程工具")
+                    Text(t.agentsHeaderTitle)
                         .font(.system(size: 13.5, weight: .semibold))
-                    Text("Antigravity、Codex、Claude Code 开箱自动读取本地会话；安装 Hook 后可实时精准显示当前正在执行的工具动作（自动备份原配置）。")
+                    Text(t.agentsHeaderDesc)
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Button("刷新状态") {
+                Button(t.btnRefreshStatus) {
                     store.refreshHookStatus()
                     store.refreshAccessibilityStatus()
                 }
-                    .controlSize(.small)
+                .controlSize(.small)
             }
             .padding(.horizontal, 18)
             .padding(.top, 14)
@@ -226,7 +291,6 @@ struct SettingsView: View {
                     .padding(.horizontal, 18)
             }
 
-            // Antigravity Exact-Conversation Jump Banner
             HStack(spacing: 12) {
                 Image(systemName: store.accessibilityGranted ? "checkmark.seal.fill" : "hand.tap.fill")
                     .font(.system(size: 16))
@@ -234,18 +298,16 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("Antigravity 点击卡片精准直达具体对话")
+                        Text(t.axBannerTitle)
                             .font(.system(size: 12.5, weight: .semibold))
-                        Text(store.accessibilityGranted ? "已就绪" : "需辅助功能权限")
+                        Text(store.accessibilityGranted ? t.axReady : t.axNeeded)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(store.accessibilityGranted ? Color(red: 0.20, green: 0.80, blue: 0.50) : .orange)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1.5)
                             .background(Capsule().fill((store.accessibilityGranted ? Color.green : Color.orange).opacity(0.15)))
                     }
-                    Text(store.accessibilityGranted
-                         ? "Codex 已原生支持深链直达；Antigravity 授权辅助功能后，Lumi 会自动用官方 Cmd+K 精准切到对应对话（不破坏剪贴板）。"
-                         : "若系统设置里开关已开但仍显示未就绪：选中列表中的 Lumi 点左下角「-」删掉旧条目，再点「+」重新添加 /Applications/Lumi.app。")
+                    Text(store.accessibilityGranted ? t.axDescReady : t.axDescNeeded)
                         .font(.system(size: 10.5))
                         .foregroundColor(.secondary)
                 }
@@ -258,7 +320,7 @@ struct SettingsView: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 } else {
-                    Button("前往授权") {
+                    Button(t.grantAccessibility) {
                         store.requestAccessibilityPermission()
                     }
                     .buttonStyle(.borderedProminent)
@@ -287,14 +349,14 @@ struct SettingsView: View {
                                     Text(kind.displayName)
                                         .font(.system(size: 13, weight: .semibold))
                                     if installed {
-                                        Text("Hook 已接入")
+                                        Text(t.hookActive)
                                             .font(.system(size: 10, weight: .semibold))
                                             .foregroundColor(Color(red: 0.18, green: 0.78, blue: 0.48))
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 1.5)
                                             .background(Capsule().fill(Color.green.opacity(0.15)))
                                     } else if kind == .antigravity || kind == .codex || kind == .claude {
-                                        Text("自动监测已就绪")
+                                        Text(t.autoWatchReady)
                                             .font(.system(size: 10, weight: .medium))
                                             .foregroundColor(.secondary)
                                             .padding(.horizontal, 6)
@@ -302,7 +364,7 @@ struct SettingsView: View {
                                             .background(Capsule().fill(Color.primary.opacity(0.07)))
                                     }
                                 }
-                                Text(kind.hookDescription)
+                                Text(kind.hookDescription(isEnglish: store.isEnglish))
                                     .font(.system(size: 10.5, design: .monospaced))
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
@@ -310,14 +372,14 @@ struct SettingsView: View {
 
                             Spacer()
 
-                            Button(installed ? "卸载 Hook" : "一键安装") {
+                            Button(installed ? t.btnUninstallHook : t.btnInstallHook) {
                                 if let err = store.toggleHook(for: kind) {
-                                    hookMessage = "❌ \(kind.displayName) 操作失败：\(err)"
+                                    hookMessage = t.hookFail(kind.displayName, err)
                                 } else {
                                     let nowOn = store.hookStatus[kind] ?? false
                                     hookMessage = nowOn
-                                        ? "✅ 已成功接入 \(kind.displayName) Hook（原配置已自动备份）"
-                                        : "已移除 \(kind.displayName) 的 Lumi Hook"
+                                        ? t.hookInstalledMsg(kind.displayName)
+                                        : t.hookRemovedMsg(kind.displayName)
                                 }
                             }
                             .buttonStyle(.bordered)
@@ -335,13 +397,13 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Alerts & Sounds
+    // MARK: - Alerts & Do Not Disturb
 
     private var alertsTab: some View {
         Form {
-            Section("独立对话完成提醒") {
-                Toggle("任务完成时播放提示音", isOn: $store.soundEnabled)
-                Picker("提示音色", selection: $store.selectedSound) {
+            Section(t.secCompletionAlerts) {
+                Toggle(t.lblPlaySound, isOn: $store.soundEnabled)
+                Picker(t.lblSoundTone, selection: $store.selectedSound) {
                     ForEach(MonitorStore.availableSounds, id: \.self) { name in
                         Text(name).tag(name)
                     }
@@ -350,17 +412,41 @@ struct SettingsView: View {
                     store.playSound(newValue)
                 }
 
-                Toggle("发送 macOS 系统通知（点击通知直接切回对应 App 并自动已读）", isOn: $store.notificationsEnabled)
+                Toggle(t.lblSystemNotif, isOn: $store.notificationsEnabled)
             }
 
-            Section("测试") {
+            Section(t.secDND) {
+                HStack(spacing: 10) {
+                    Image(systemName: store.isDNDActive ? "moon.zzz.fill" : "bell.fill")
+                        .foregroundColor(store.isDNDActive ? LumiPalette.emberOrange : .secondary)
+                    Text(store.dndRemainingText.map { t.dndActiveLabel($0) } ?? t.dndInactiveLabel)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(store.isDNDActive ? .primary : .secondary)
+                    Spacer()
+                }
+                HStack(spacing: 8) {
+                    Button(t.menuDND30m) { store.enableDND(minutes: 30) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    Button(t.menuDND1h) { store.enableDND(minutes: 60) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    if store.isDNDActive {
+                        Button(t.menuDNDOff) { store.disableDND() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                }
+            }
+
+            Section(t.secTest) {
                 HStack {
-                    Button("发送测试通知与提示音") {
+                    Button(t.btnTestAlert) {
                         store.sendTestNotification()
                     }
                     .buttonStyle(.borderedProminent)
                     Spacer()
-                    Text("可在 macOS 系统设置 → 通知 → Lumi 设为「提醒」样式")
+                    Text(t.testAlertTip)
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
