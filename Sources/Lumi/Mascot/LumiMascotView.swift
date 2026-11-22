@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Original animated Space-Ghost / Capsule mascot "Lumi" drawn with crisp SwiftUI Canvas vectors.
@@ -61,25 +62,25 @@ struct LumiMascotView: View {
         let tiltDeg: Double
         switch mood {
         case .celebrating:
-            bob = -abs(sin(t * 7.5)) * s * 0.11
-            tiltDeg = sin(t * 7.5) * 6.0
+            bob = -CGFloat(abs(Foundation.sin(t * 7.5))) * s * 0.11
+            tiltDeg = Foundation.sin(t * 7.5) * 6.0
         case .poked:
-            bob = -abs(sin(t * 10.0)) * s * 0.08
-            tiltDeg = sin(t * 12.0) * 8.0
+            bob = -CGFloat(abs(Foundation.sin(t * 10.0))) * s * 0.08
+            tiltDeg = Foundation.sin(t * 12.0) * 8.0
         case .dizzy:
-            bob = sin(t * 4.0) * s * 0.03
-            tiltDeg = sin(t * 9.0) * 11.0
+            bob = CGFloat(Foundation.sin(t * 4.0)) * s * 0.03
+            tiltDeg = Foundation.sin(t * 9.0) * 11.0
         case .working:
-            bob = sin(t * 4.2) * s * 0.035
-            tiltDeg = sin(t * 2.1) * 2.5
+            bob = CGFloat(Foundation.sin(t * 4.2)) * s * 0.035
+            tiltDeg = Foundation.sin(t * 2.1) * 2.5
         case .error:
-            bob = sin(t * 16.0) * s * 0.015
-            tiltDeg = sin(t * 18.0) * 3.0
+            bob = CGFloat(Foundation.sin(t * 16.0)) * s * 0.015
+            tiltDeg = Foundation.sin(t * 18.0) * 3.0
         case .waitingUnread:
-            bob = sin(t * 3.2) * s * 0.045
+            bob = CGFloat(Foundation.sin(t * 3.2)) * s * 0.045
             tiltDeg = 0
         case .sleeping:
-            bob = sin(t * 1.5) * s * 0.03
+            bob = CGFloat(Foundation.sin(t * 1.5)) * s * 0.03
             tiltDeg = -3.0
         }
 
@@ -156,7 +157,7 @@ struct LumiMascotView: View {
         )
 
         // 3. Cute little side nubs / floating hands
-        let handOffsetY = sin(t * 5.0) * s * 0.02
+        let handOffsetY = CGFloat(Foundation.sin(t * 5.0)) * s * 0.02
         if mood == .celebrating {
             // Arms raised cheering!
             let leftArm = CGRect(x: -bw * 0.56, y: -bh * 0.18 + handOffsetY, width: s * 0.11, height: s * 0.15)
@@ -165,8 +166,8 @@ struct LumiMascotView: View {
             bodyCtx.fill(Path(roundedRect: rightArm, cornerRadius: s * 0.06), with: .color(theme.bodyTop))
         } else if mood == .working && !isCompact {
             // Tiny tapping hands
-            let tapL = abs(sin(t * 14.0)) * s * 0.03
-            let tapR = abs(cos(t * 14.0)) * s * 0.03
+            let tapL = CGFloat(abs(Foundation.sin(t * 14.0))) * s * 0.03
+            let tapR = CGFloat(abs(Foundation.cos(t * 14.0))) * s * 0.03
             let leftArm = CGRect(x: -bw * 0.44, y: bh * 0.14 - tapL, width: s * 0.11, height: s * 0.09)
             let rightArm = CGRect(x: bw * 0.33, y: bh * 0.14 - tapR, width: s * 0.11, height: s * 0.09)
             bodyCtx.fill(Path(roundedRect: leftArm, cornerRadius: s * 0.05), with: .color(theme.bodyTop.opacity(0.95)))
@@ -350,7 +351,10 @@ struct LumiMascotView: View {
                     let frac = Double(step) / Double(steps)
                     let angle = frac * 3.3 * .pi + t * 8.0 * dir
                     let rad = r * CGFloat(0.14 + frac * 0.86)
-                    let pt = CGPoint(x: ex + cos(angle) * rad, y: ey + sin(angle) * rad)
+                    let pt = CGPoint(
+                        x: ex + CGFloat(Foundation.cos(angle)) * rad,
+                        y: ey + CGFloat(Foundation.sin(angle)) * rad
+                    )
                     if step == 0 { spiral.move(to: pt) } else { spiral.addLine(to: pt) }
                 }
                 ctx.stroke(spiral, with: .color(eyeColor), style: StrokeStyle(lineWidth: max(1.0, s * 0.019), lineCap: .round))
@@ -401,9 +405,9 @@ struct LumiMascotView: View {
             ]
             for i in 0..<6 {
                 let angle = Double(i) * (.pi / 3.0) + t * 2.2
-                let radius = s * (0.40 + 0.07 * CGFloat(sin(t * 7.0 + Double(i))))
-                let px = cx + cos(angle) * radius
-                let py = cy - s * 0.08 + sin(angle) * radius * 0.72
+                let radius = s * (0.40 + 0.07 * CGFloat(Foundation.sin(t * 7.0 + Double(i))))
+                let px = cx + CGFloat(Foundation.cos(angle)) * radius
+                let py = cy - s * 0.08 + CGFloat(Foundation.sin(angle)) * radius * 0.72
                 let d = s * 0.085
                 ctx.fill(Path(ellipseIn: CGRect(x: px - d * 0.5, y: py - d * 0.5, width: d, height: d)), with: .color(colors[i % colors.count]))
             }
@@ -456,7 +460,10 @@ struct LumiMascotView: View {
         for i in 0..<8 {
             let angle = Double(i) * (.pi / 4.0) - .pi / 2.0
             let r = (i % 2 == 0) ? radius : inner
-            let pt = CGPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * r)
+            let pt = CGPoint(
+                x: center.x + CGFloat(Foundation.cos(angle)) * r,
+                y: center.y + CGFloat(Foundation.sin(angle)) * r
+            )
             if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
         }
         p.closeSubpath()
