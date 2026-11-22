@@ -67,8 +67,8 @@ final class NotchWindowController: ObservableObject {
     private var hoverOpenWork: DispatchWorkItem?
     private var hoverCloseWork: DispatchWorkItem?
 
-    private let expandedWidth: CGFloat = 492     // 460pt inner bento + 16pt concave bezel shoulders each side
-    private let expandedHeight: CGFloat = 452
+    private let expandedWidth: CGFloat = 496     // inner bento + concave bezel shoulders + light sleeve margin
+    private let expandedHeight: CGFloat = 464
 
     init(store: MonitorStore, onPopOutFloating: @escaping () -> Void, onOpenSettings: @escaping () -> Void) {
         self.store = store

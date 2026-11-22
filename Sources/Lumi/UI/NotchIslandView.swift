@@ -111,22 +111,73 @@ struct NotchIslandView: View {
         let shape = NotchIslandShape(topEarRadius: earRadius, bottomRadius: bottomRadius)
         return ZStack(alignment: .top) {
             if isExpanded {
-                // Seamless pitch-black top hardware camera cap + Warm Charcoal OR Morning Oat Light body!
-                ZStack(alignment: .top) {
-                    LiquidGlassBackdrop(material: surface.isLight ? .popover : .hudWindow, isLight: surface.isLight)
+                if surface.isLight {
+                    // Option A: Hardware Bezel Sleeve — seamless 100% matte-black physical notch shell
+                    // framing a crisp inset Morning Oat Light rounded card (zero dirty black->white gradient!).
+                    ZStack(alignment: .top) {
+                        shape
+                            .fill(Color.black)
+                            .overlay(
+                                shape.stroke(
+                                    LinearGradient(
+                                        stops: [
+                                            .init(color: Color.clear, location: 0.0),
+                                            .init(color: Color.clear, location: 0.10),
+                                            .init(color: Color.white.opacity(0.11), location: 0.55),
+                                            .init(color: Color.white.opacity(0.07), location: 1.0)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    lineWidth: 0.9
+                                )
+                                .clipShape(shape)
+                            )
 
-                    if surface.isLight {
-                        LinearGradient(
-                            stops: [
-                                .init(color: Color.black, location: 0.0),
-                                .init(color: Color.black, location: 0.068),
-                                .init(color: surface.shellTop, location: 0.088),
-                                .init(color: surface.shellBottom, location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    } else {
+                        VStack(spacing: 0) {
+                            Spacer()
+                                .frame(height: max(30, hardwareNotchHeight))
+
+                            StudioBentoBoardView(
+                                store: store,
+                                inNotch: true,
+                                surface: surface,
+                                lookOffset: lookOffset,
+                                onSwitchMode: onPopOutFloating,
+                                onOpenSettings: onOpenSettings,
+                                onHide: nil,
+                                onDidJump: onCollapseAfterJump
+                            )
+                            .background(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 0.974, green: 0.952, blue: 0.922),
+                                                Color(red: 0.946, green: 0.916, blue: 0.874)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.86), lineWidth: 0.85)
+                            )
+                            .padding(.horizontal, earRadius + 5)
+                            .padding(.bottom, 6)
+                        }
+                        .clipShape(shape)
+                    }
+                    .preferredColorScheme(.light)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+                } else {
+                    // Warm Charcoal Hearth dark glass fused seamlessly into the pitch-black camera bezel
+                    ZStack(alignment: .top) {
+                        LiquidGlassBackdrop(material: .hudWindow, isLight: false)
+
                         LinearGradient(
                             stops: [
                                 .init(color: Color.black, location: 0.0),
@@ -138,51 +189,44 @@ struct NotchIslandView: View {
                             endPoint: .bottom
                         )
                     }
-                }
-                .clipShape(shape)
-                .overlay(
-                    shape.stroke(
-                        LinearGradient(
-                            stops: surface.isLight
-                                ? [
-                                    .init(color: Color.clear, location: 0.0),
-                                    .init(color: Color.clear, location: 0.08),
-                                    .init(color: Color.white.opacity(0.75), location: 0.22),
-                                    .init(color: Color(red: 0.78, green: 0.70, blue: 0.62).opacity(0.55), location: 1.0)
-                                ]
-                                : [
+                    .clipShape(shape)
+                    .overlay(
+                        shape.stroke(
+                            LinearGradient(
+                                stops: [
                                     .init(color: Color.clear, location: 0.0),
                                     .init(color: Color.clear, location: 0.10),
                                     .init(color: LumiPalette.champagneRim.opacity(0.16), location: 0.45),
                                     .init(color: LumiPalette.emberGold.opacity(0.15), location: 1.0)
                                 ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1.1
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1.1
+                        )
+                        .clipShape(shape)
                     )
+
+                    VStack(spacing: 0) {
+                        Spacer()
+                            .frame(height: max(32, hardwareNotchHeight))
+
+                        StudioBentoBoardView(
+                            store: store,
+                            inNotch: true,
+                            surface: surface,
+                            lookOffset: lookOffset,
+                            onSwitchMode: onPopOutFloating,
+                            onOpenSettings: onOpenSettings,
+                            onHide: nil,
+                            onDidJump: onCollapseAfterJump
+                        )
+                        .padding(.horizontal, earRadius)
+                    }
                     .clipShape(shape)
-                )
-
-                VStack(spacing: 0) {
-                    Spacer()
-                        .frame(height: max(32, hardwareNotchHeight))
-
-                    StudioBentoBoardView(
-                        store: store,
-                        inNotch: true,
-                        surface: surface,
-                        lookOffset: lookOffset,
-                        onSwitchMode: onPopOutFloating,
-                        onOpenSettings: onOpenSettings,
-                        onHide: nil,
-                        onDidJump: onCollapseAfterJump
-                    )
-                    .padding(.horizontal, earRadius)
+                    .preferredColorScheme(.dark)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                 }
-                .clipShape(shape)
-                .preferredColorScheme(surface.isLight ? .light : .dark)
-                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             } else {
                 // Collapsed ears hugging left & right of the physical camera notch (Scheme 1)
                 shape

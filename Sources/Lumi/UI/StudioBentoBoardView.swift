@@ -109,7 +109,8 @@ struct StudioBentoBoardView: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
-        .padding(.top, inNotch ? 2 : 12)
+        .padding(.top, (inNotch && !surface.isLight) ? 2 : 11)
+        .environment(\.colorScheme, surface.isLight ? .light : .dark)
     }
 
     // MARK: - Left Warm Hearth Mascot Stage
@@ -424,20 +425,22 @@ struct StudioBentoBoardView: View {
                 } label: {
                     HStack(spacing: 3) {
                         Text(store.selectedFilter == .all ? t.allAgents : store.selectedFilter.label(isEnglish: store.isEnglish))
-                            .font(.system(size: 10.2, weight: .medium))
+                            .font(.system(size: 10.2, weight: .semibold))
                         Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8.2, weight: .semibold))
+                            .font(.system(size: 8.2, weight: .bold))
                     }
-                    .foregroundColor(surface.secondaryText)
-                    .padding(.horizontal, 8)
+                    .foregroundColor(surface.isLight ? surface.primaryText.opacity(0.76) : surface.secondaryText)
+                    .padding(.horizontal, 8.5)
                     .padding(.vertical, 4)
                     .background(
                         Capsule()
                             .fill(surface.pillBg)
-                            .overlay(Capsule().strokeBorder(surface.divider, lineWidth: 0.5))
+                            .overlay(Capsule().strokeBorder(surface.divider, lineWidth: 0.6))
                     )
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
                 .fixedSize()
 
                 if !store.unreadCompletedSessions.isEmpty {
