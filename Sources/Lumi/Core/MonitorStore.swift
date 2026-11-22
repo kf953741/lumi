@@ -147,7 +147,7 @@ final class MonitorStore: ObservableObject {
     /// a session must stay continuously finished for 4.5s before popping a completion alert.
     private var pendingFinishSince: [String: Date] = [:]
     private var notifiedCompletedAt: [String: TimeInterval] = [:]
-    private var notifiedNeedsInputAt: [String: TimeInterval] = [:]
+    private var notifiedNeedsInputKey: [String: String] = [:]
     private let completionDebounceSeconds: TimeInterval = 4.5
     private var didInitialScan = false
     private let launchTime = Date()
@@ -713,10 +713,10 @@ final class MonitorStore: ObservableObject {
                 if liveStartedAt[s.id] == nil {
                     liveStartedAt[s.id] = s.startedAt ?? now
                 }
-                let updTs = s.updatedAt.timeIntervalSince1970
-                let alreadyAlerted = (notifiedNeedsInputAt[s.id] ?? 0) >= updTs - 2.0
+                let alertKey = s.currentAction
+                let alreadyAlerted = (prev == .needsInput && notifiedNeedsInputKey[s.id] == alertKey)
                 if !isFirst && !alreadyAlerted && !(hideCLISessions && s.isCLI) {
-                    notifiedNeedsInputAt[s.id] = updTs
+                    notifiedNeedsInputKey[s.id] = alertKey
                     newlyNeedsInput.append(s)
                 }
                 s = AgentSession(
@@ -728,8 +728,9 @@ final class MonitorStore: ObservableObject {
                     activeSubagents: s.activeSubagents, isUnread: false
                 )
             } else if s.status == .running {
-                // Cancel any pending completion debounce if the conversation resumed!
+                // Cancel any pending completion debounce & reset needs-input dedupe once the agent resumes!
                 pendingFinishSince.removeValue(forKey: s.id)
+                notifiedNeedsInputKey.removeValue(forKey: s.id)
                 if liveStartedAt[s.id] == nil {
                     liveStartedAt[s.id] = s.startedAt ?? now
                 }
@@ -743,6 +744,7 @@ final class MonitorStore: ObservableObject {
                     activeSubagents: s.activeSubagents, isUnread: false
                 )
             } else {
+                notifiedNeedsInputKey.removeValue(forKey: s.id)
                 var dur = s.durationSec
                 if dur == nil, let start = liveStartedAt[s.id] {
                     dur = max(1, now.timeIntervalSince(start))

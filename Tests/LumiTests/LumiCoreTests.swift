@@ -120,4 +120,42 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertEqual(ProjectNameHelper.formatMMSS(134), "02:14")
         XCTAssertEqual(ProjectNameHelper.formatMMSS(3903), "1h05")
     }
+
+    func testAntigravityAXPromptDetectorCatchesBrowserDownloadApproval() {
+        let buttons = [
+            "Stop execution",
+            "Yes, allow this download",
+            "No (tell the agent what to do instead)",
+            "Skip",
+            "Submit ↵",
+            "Cancel (⌃C)"
+        ]
+        let texts = [
+            "Gemini Web Image Generator",
+            "Allow the browser agent to download a file?",
+            "File",
+            "Gemini_Generated_Image.jpeg"
+        ]
+        XCTAssertEqual(
+            AntigravityAXPromptDetector.classifyPrompt(buttons: buttons, texts: texts),
+            "Allow the browser agent to download a file?"
+        )
+    }
+
+    func testAntigravityAXPromptDetectorIgnoresNormalRunningChrome() {
+        let buttons = [
+            "Automations", "Stop execution", "Copy", "Undo to this point",
+            "Record voice memo", "Start Voice mode", "Cancel (⌃C)", "Settings"
+        ]
+        let texts = ["Ask anything, @ to mention, / for actions", "Agent working"]
+        XCTAssertNil(AntigravityAXPromptDetector.classifyPrompt(buttons: buttons, texts: texts))
+    }
+
+    func testAntigravityAXPromptDetectorExtractsConversationIdFromLocalURL() {
+        let url = "https://127.0.0.1:55044/c/72a7abe1-df64-462b-9484-f9998214b483?project=a64f3e40"
+        XCTAssertEqual(
+            AntigravityAXPromptDetector.extractConversationId(from: url),
+            "72a7abe1-df64-462b-9484-f9998214b483"
+        )
+    }
 }

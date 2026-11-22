@@ -1,4 +1,264 @@
+import AppKit
+import ApplicationServices
 import Foundation
+
+/// Inspects live Antigravity UI windows via macOS Accessibility (only while an Antigravity
+/// agent is active — 0% idle CPU) to catch in-app confirmation prompts that do not emit hooks
+/// (e.g., "Allow the browser agent to download a file?", browser origin approvals, command
+/// permission dialogs, and interactive Submit/Skip prompts).
+enum AntigravityAXPromptDetector {
+    private static var configuredPIDs: Set<pid_t> = []
+    private static let lock = NSLock()
+
+    static func extractConversationId(from urlString: String) -> String? {
+        guard let range = urlString.range(of: "/c/") else { return nil }
+        let tail = urlString[range.upperBound...]
+        let cid = tail.prefix { ch in
+            ch.isLetter || ch.isNumber || ch == "-" || ch == "_"
+        }
+        return cid.count >= 8 ? String(cid) : nil
+    }
+
+    /// Pure classifier for active confirmation/approval prompt cards (zero false positives on
+    /// normal Antigravity chat chrome, which only exposes `Cancel (⌃C)`, `Copy`, `Stop execution`, etc.).
+    static func classifyPrompt(buttons: [String], texts: [String]) -> String? {
+        let normButtons = buttons.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+
+        let hasSubmit = normButtons.contains { b in
+            b == "submit" || b.hasPrefix("submit ") || b.hasPrefix("submit↵") || b.hasPrefix("submit\n") || b == "提交"
+        }
+        let hasSkip = normButtons.contains { b in
+            b == "skip" || b.hasPrefix("skip ") || b == "跳过"
+        }
+
+        let hasApprove = normButtons.contains { b in
+            b == "allow"
+                || b == "always allow"
+                || b == "allow once"
+                || b == "allow for this session"
+                || b.hasPrefix("yes, allow")
+                || b.hasPrefix("allow this")
+                || b == "approve"
+                || b == "accept"
+                || b == "accept all"
+                || b == "run command"
+                || b == "proceed"
+                || b == "允许"
+                || b == "同意"
+                || b == "始终允许"
+                || b == "确认允许"
+        }
+        let hasReject = normButtons.contains { b in
+            b == "deny"
+                || b == "reject"
+                || b == "decline"
+                || b == "skip"
+                || b == "no"
+                || b.hasPrefix("no (")
+                || b.hasPrefix("no,")
+                || b == "拒绝"
+                || b == "不同意"
+                || b == "跳过"
+        }
+
+        guard (hasSubmit && hasSkip) || (hasApprove && hasReject) else {
+            return nil
+        }
+
+        // Extract the clearest human-readable prompt heading (search closest to bottom composer first)
+        let candidates = texts.reversed().compactMap { raw -> String? in
+            let s = ProjectNameHelper.cleanOneLine(raw, maxLength: 72)
+            guard s.count >= 6 else { return nil }
+            let low = s.lowercased()
+            if low.hasPrefix("ask anything") || low.hasPrefix("load older") { return nil }
+            return s
+        }
+
+        if let explicit = candidates.first(where: { s in
+            let low = s.lowercased()
+            return low.hasPrefix("allow ")
+                || low.contains("browser agent to")
+                || low.contains("wants to ")
+                || low.contains("permission")
+                || low.contains("approval")
+                || low.hasPrefix("run ")
+                || s.contains("允许")
+                || s.contains("确认")
+                || s.contains("批准")
+        }) {
+            return explicit
+        }
+        if let question = candidates.first(where: { $0.hasSuffix("?") || $0.hasSuffix("？") }) {
+            return question
+        }
+        return "等待你的审批或回复"
+    }
+
+    static func detectPendingPrompts() -> [String: String] {
+        guard AXIsProcessTrusted() else { return [:] }
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.antigravity")
+        guard !runningApps.isEmpty else { return [:] }
+
+        var detected: [String: String] = [:]
+
+        for app in runningApps {
+            let pid = app.processIdentifier
+            let axApp = AXUIElementCreateApplication(pid)
+
+            lock.lock()
+            let needsEnable = !configuredPIDs.contains(pid)
+            if needsEnable { configuredPIDs.insert(pid) }
+            lock.unlock()
+            if needsEnable {
+                AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            }
+
+            var winsRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &winsRef) == .success,
+                  let windows = winsRef as? [AXUIElement] else {
+                continue
+            }
+
+            for win in windows {
+                let webAreas = findLocalUIWebAreas(in: win, depth: 0)
+                for area in webAreas {
+                    var urlRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(area, kAXURLAttribute as CFString, &urlRef)
+                    let urlStr = (urlRef as? URL)?.absoluteString ?? (urlRef as? String ?? "")
+                    let activeConvId = extractConversationId(from: urlStr)
+
+                    var buttons: [String] = []
+                    var texts: [String] = []
+                    var sidebarWaiting: [String: String] = [:]
+                    var visited = 0
+
+                    walkUI(
+                        area,
+                        depth: 0,
+                        visited: &visited,
+                        buttons: &buttons,
+                        texts: &texts,
+                        sidebarWaiting: &sidebarWaiting
+                    )
+
+                    for (cid, msg) in sidebarWaiting {
+                        if detected[cid] == nil { detected[cid] = msg }
+                    }
+                    if let cid = activeConvId,
+                       let prompt = classifyPrompt(buttons: buttons, texts: texts) {
+                        detected[cid] = prompt
+                    }
+                }
+            }
+        }
+        return detected
+    }
+
+    private static func findLocalUIWebAreas(in el: AXUIElement, depth: Int) -> [AXUIElement] {
+        if depth > 12 { return [] }
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &roleRef)
+        if (roleRef as? String) == "AXWebArea" {
+            var urlRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(el, kAXURLAttribute as CFString, &urlRef)
+            let u = (urlRef as? URL)?.absoluteString ?? (urlRef as? String ?? "")
+            if u.contains("127.0.0.1") || u.contains("localhost") {
+                return [el]
+            }
+            return []
+        }
+        var out: [AXUIElement] = []
+        var childrenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+           let children = childrenRef as? [AXUIElement] {
+            for c in children {
+                out.append(contentsOf: findLocalUIWebAreas(in: c, depth: depth + 1))
+            }
+        }
+        return out
+    }
+
+    private static func collectDirectText(from el: AXUIElement, maxDepth: Int = 2) -> String {
+        var parts: [String] = []
+        func gather(_ node: AXUIElement, d: Int) {
+            if d > maxDepth || parts.count >= 6 { return }
+            var tRef: CFTypeRef?; var dRef: CFTypeRef?; var vRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(node, kAXTitleAttribute as CFString, &tRef)
+            AXUIElementCopyAttributeValue(node, kAXDescriptionAttribute as CFString, &dRef)
+            AXUIElementCopyAttributeValue(node, kAXValueAttribute as CFString, &vRef)
+            for c in [tRef as? String, dRef as? String, vRef as? String] {
+                if let s = c?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                    parts.append(s)
+                    break
+                }
+            }
+            var kidsRef: CFTypeRef?
+            if d < maxDepth,
+               AXUIElementCopyAttributeValue(node, kAXChildrenAttribute as CFString, &kidsRef) == .success,
+               let kids = kidsRef as? [AXUIElement] {
+                for k in kids { gather(k, d: d + 1) }
+            }
+        }
+        gather(el, d: 0)
+        return parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func walkUI(
+        _ el: AXUIElement,
+        depth: Int,
+        visited: inout Int,
+        buttons: inout [String],
+        texts: inout [String],
+        sidebarWaiting: inout [String: String]
+    ) {
+        if visited >= 1400 || depth > 28 { return }
+        visited += 1
+
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &roleRef)
+        let role = roleRef as? String ?? ""
+
+        if role == "AXButton" {
+            let label = collectDirectText(from: el, maxDepth: 2)
+            if !label.isEmpty {
+                buttons.append(label)
+            }
+        } else if role == "AXStaticText" || role == "AXHeading" {
+            var valRef: CFTypeRef?; var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &valRef)
+            AXUIElementCopyAttributeValue(el, kAXTitleAttribute as CFString, &titleRef)
+            if let s = (valRef as? String ?? titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !s.isEmpty, s.count <= 140 {
+                texts.append(s)
+            }
+        } else if role == "AXLink" {
+            var urlRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(el, kAXURLAttribute as CFString, &urlRef)
+            let urlStr = (urlRef as? URL)?.absoluteString ?? (urlRef as? String ?? "")
+            if let cid = extractConversationId(from: urlStr) {
+                let combined = collectDirectText(from: el, maxDepth: 2).lowercased()
+                if combined.contains("needs approval")
+                    || combined.contains("waiting for approval")
+                    || combined.contains("action required")
+                    || combined.contains("requires approval")
+                    || combined.contains("needs input")
+                    || combined.contains("等待确认")
+                    || combined.contains("需要批准") {
+                    sidebarWaiting[cid] = "等待你的审批或回复"
+                }
+            }
+        }
+
+        var childrenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+           let children = childrenRef as? [AXUIElement] {
+            for c in children {
+                walkUI(c, depth: depth + 1, visited: &visited, buttons: &buttons, texts: &texts, sidebarWaiting: &sidebarWaiting)
+                if visited >= 1400 { break }
+            }
+        }
+    }
+}
 
 final class AntigravityScanner: @unchecked Sendable {
     private let dbPath: String
@@ -50,35 +310,65 @@ final class AntigravityScanner: @unchecked Sendable {
         var byId: [String: DBConversation] = [:]
         for row in dbRows { byId[row.id] = row }
 
-        // Roll up active child subagents onto their root parent conversation
+        // Only inspect Antigravity's macOS Accessibility tree while at least one agent is active (0% idle CPU)
+        let hasAnyActive = dbRows.contains { $0.status == "CASCADE_RUN_STATUS_RUNNING" || $0.notFullyIdle }
+            || hookMap.values.contains { ($0.state == "running" || $0.state == "needs_input") && now.timeIntervalSince($0.updatedAt) < 60 }
+        let rawAXPrompts: [String: String] = hasAnyActive ? AntigravityAXPromptDetector.detectPendingPrompts() : [:]
+
+        // Helper to resolve any subagent/conversation ID up to its root top-level conversation ID
+        func rootConversationId(for id: String) -> String {
+            var cur = id
+            var hops = 0
+            while !cur.isEmpty && hops < 6 {
+                let p = byId[cur]?.parentId.isEmpty == false ? byId[cur]!.parentId : (parentTable[cur] ?? "")
+                if !p.isEmpty { cur = p } else { break }
+                hops += 1
+            }
+            return cur
+        }
+
+        // Map live AX prompts (including subagent tabs) to their root conversation ID
+        var axNeedsInputByRoot: [String: String] = [:]
+        for (cid, prompt) in rawAXPrompts {
+            let root = rootConversationId(for: cid)
+            if !root.isEmpty {
+                axNeedsInputByRoot[root] = prompt
+            }
+        }
+
+        // Roll up active child subagents (and any child `needs_input` prompts!) onto their root parent conversation
         var activeSubagents: [String: Int] = [:]
         var activeSubagentAction: [String: (Date, String)] = [:]
+        var subagentNeedsInput: [String: (Date, String)] = [:]
         for row in dbRows {
             let explicitParent = !row.parentId.isEmpty ? row.parentId : (parentTable[row.id] ?? "")
             guard !explicitParent.isEmpty || row.nestingDepth > 0 else { continue }
             let hook = hookMap[row.id]
+            let isChildNeedsInput = (hook?.state == "needs_input" && now.timeIntervalSince(hook?.updatedAt ?? .distantPast) < 1200)
             let isRunning = row.status == "CASCADE_RUN_STATUS_RUNNING"
                 || row.notFullyIdle
+                || isChildNeedsInput
                 || (hook?.state == "running" && now.timeIntervalSince(hook?.updatedAt ?? .distantPast) < 45)
             guard isRunning else { continue }
 
-            var cur = explicitParent
-            var hops = 0
-            while !cur.isEmpty && hops < 6 {
-                let next = byId[cur]?.parentId.isEmpty == false ? byId[cur]!.parentId : (parentTable[cur] ?? "")
-                if !next.isEmpty { cur = next } else { break }
-                hops += 1
-            }
-            if !cur.isEmpty {
-                activeSubagents[cur, default: 0] += 1
-                if let hook, hook.state == "running", !hook.action.isEmpty,
-                   now.timeIntervalSince(hook.updatedAt) < 120 {
-                    if let existing = activeSubagentAction[cur] {
+            let root = rootConversationId(for: explicitParent)
+            if !root.isEmpty {
+                activeSubagents[root, default: 0] += 1
+                if isChildNeedsInput, let hook {
+                    let msg = hook.action.isEmpty ? "等待你的审批或回复" : hook.action
+                    if let existing = subagentNeedsInput[root] {
+                        if hook.updatedAt > existing.0 { subagentNeedsInput[root] = (hook.updatedAt, msg) }
+                    } else {
+                        subagentNeedsInput[root] = (hook.updatedAt, msg)
+                    }
+                } else if let hook, hook.state == "running", !hook.action.isEmpty,
+                          now.timeIntervalSince(hook.updatedAt) < 120 {
+                    if let existing = activeSubagentAction[root] {
                         if hook.updatedAt > existing.0 {
-                            activeSubagentAction[cur] = (hook.updatedAt, hook.action)
+                            activeSubagentAction[root] = (hook.updatedAt, hook.action)
                         }
                     } else {
-                        activeSubagentAction[cur] = (hook.updatedAt, hook.action)
+                        activeSubagentAction[root] = (hook.updatedAt, hook.action)
                     }
                 }
             }
@@ -92,13 +382,16 @@ final class AntigravityScanner: @unchecked Sendable {
                 continue
             }
             let subCount = activeSubagents[row.id] ?? 0
-            let dbSaysRunning = (row.status == "CASCADE_RUN_STATUS_RUNNING") || row.notFullyIdle || (subCount > 0)
+            let promptFromAX = axNeedsInputByRoot[row.id]
+            let promptFromSubagent = subagentNeedsInput[row.id]?.1
+            let dbSaysRunning = (row.status == "CASCADE_RUN_STATUS_RUNNING") || row.notFullyIdle || (subCount > 0) || (promptFromAX != nil)
             guard row.lastModified >= cutoff || dbSaysRunning else { continue }
             let session = buildSession(
                 db: row,
                 hook: hookMap[row.id],
                 subCount: subCount,
                 subAction: activeSubagentAction[row.id]?.1,
+                livePrompt: promptFromAX ?? promptFromSubagent,
                 now: now
             )
             results.append(session)
@@ -111,7 +404,7 @@ final class AntigravityScanner: @unchecked Sendable {
         return results
     }
 
-    private func buildSession(db: DBConversation, hook: LiveHookRecord?, subCount: Int, subAction: String?, now: Date) -> AgentSession {
+    private func buildSession(db: DBConversation, hook: LiveHookRecord?, subCount: Int, subAction: String?, livePrompt: String?, now: Date) -> AgentSession {
         let isCLI = db.source.contains("CLI")
         let wsPath = parseFirstWorkspaceURI(db.workspaceURIs)
             ?? hook?.workspacePaths.first
@@ -138,9 +431,9 @@ final class AntigravityScanner: @unchecked Sendable {
         let hookRunningRecent = hook.map { $0.state == "running" && now.timeIntervalSince($0.updatedAt) < 300 } ?? false
         let hookNeedsInput = hook.map { $0.state == "needs_input" && now.timeIntervalSince($0.updatedAt) < 1200 } ?? false
 
-        // DB truth for "still running" ALWAYS wins unless the hook explicitly signals blocked on user approval/input.
+        // Live AX prompt or explicit needs_input hook ALWAYS takes priority so approvals never hide behind "running".
         let status: SessionStatus
-        if hookNeedsInput && (dbSaysRunning || hookFresher) {
+        if livePrompt != nil || (hookNeedsInput && (dbSaysRunning || hookFresher)) {
             status = .needsInput
         } else if dbSaysRunning {
             status = .running
@@ -156,7 +449,11 @@ final class AntigravityScanner: @unchecked Sendable {
 
         let action: String
         if status == .needsInput {
-            action = hook?.action.isEmpty == false ? (hook?.action ?? "等待你的审批或回复") : "等待你的审批或回复"
+            if let livePrompt, !livePrompt.isEmpty {
+                action = livePrompt == "等待你的审批或回复" ? livePrompt : "等待确认 · \(livePrompt)"
+            } else {
+                action = hook?.action.isEmpty == false ? (hook?.action ?? "等待你的审批或回复") : "等待你的审批或回复"
+            }
         } else if status == .running {
             if let hook, !hook.action.isEmpty, hook.state == "running", now.timeIntervalSince(hook.updatedAt) < 120 {
                 action = hook.action
