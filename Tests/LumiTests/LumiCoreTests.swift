@@ -258,4 +258,106 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertEqual(done.project, "独立对话")
         XCTAssertEqual(done.durationSec ?? 0, 60.0, accuracy: 2.0)
     }
+
+    func testT3CodeDeduplicatesUnderlyingCodexAndAntigravitySessions() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-dedupe-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let dbPath = dir.appendingPathComponent("statev2.sqlite").path
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &rawDB), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let now = Date()
+        let tStart = iso.string(from: now.addingTimeInterval(-30))
+        let tNow = iso.string(from: now.addingTimeInterval(-2))
+
+        let sql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+            default_provider TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+            provider TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+            completed_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
+            updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE provider_session_runtime (
+            thread_id TEXT PRIMARY KEY, provider_name TEXT NOT NULL, status TEXT NOT NULL,
+            resume_cursor_json TEXT
+        );
+
+        INSERT INTO projection_projects VALUES ('p1', 'MyRepo', '/Users/test/MyRepo');
+
+        -- T3 thread running GPT via Codex with bound nativeThreadRef
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('t3-gpt', 'p1', 'Refactor API', 'codex', '\(tStart)', '\(tNow)', NULL, NULL, '{"worktreePath":"/Users/test/MyRepo"}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-gpt', 't3-gpt', 1, 'codex', 'running', '\(tStart)', NULL, '{}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-1', 't3-gpt', 'codex', '{"nativeThreadRef":{"driver":"codex","nativeId":"01a20458-f6db-73c1-b7bb-549783b69ea8","strength":"strong"}}');
+
+        -- T3 thread in first-second pending window (nativeThreadRef not written yet)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('t3-pending', 'p1', 'Just started', 'codex', '\(tNow)', '\(tNow)', NULL, NULL, '{"worktreePath":"/Users/test/PendingRepo"}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-pend', 't3-pending', 1, 'codex', 'starting', '\(tNow)', NULL, '{}');
+
+        -- Untouched imported Codex thread (must NOT suppress standalone Codex)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('import:codex:standalone-codex-id', 'p1', 'Standalone Codex', 'codex', '\(tStart)', '\(tStart)', NULL, NULL, '{}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-imp', 'import:codex:standalone-codex-id', 'codex', '{"nativeThreadRef":{"driver":"codex","nativeId":"standalone-codex-id","strength":"strong"}}');
+        """
+        XCTAssertEqual(sqlite3_exec(rawDB, sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(rawDB), SQLITE_OK)
+
+        let scanner = T3CodeScanner(v2DbPath: dbPath, v1DbPath: dir.appendingPathComponent("none.sqlite").path, isT3RunningCheck: { true })
+        let res = scanner.scanDetailed(lookbackHours: 24, now: now)
+
+        func makeSession(kind: AgentKind, rawId: String, cwd: String, startedAt: Date) -> AgentSession {
+            AgentSession(
+                id: "\(kind.rawValue):\(rawId)", rawId: rawId, kind: kind, title: "test",
+                project: "MyRepo", cwd: cwd, isCLI: false, status: .running,
+                currentAction: "执行中…", detailSummary: "", startedAt: startedAt,
+                updatedAt: startedAt, completedAt: nil, durationSec: nil, activeSubagents: 0, isUnread: false
+            )
+        }
+
+        // 1. Exact nativeThreadRef match -> MUST be owned/suppressed
+        let dupCodex = makeSession(kind: .codex, rawId: "01a20458-f6db-73c1-b7bb-549783b69ea8", cwd: "/Users/test/MyRepo", startedAt: now)
+        XCTAssertTrue(res.ownsUnderlying(dupCodex))
+
+        // 2. T3 scratch directory fallback -> MUST be owned/suppressed
+        let scratchCodex = makeSession(kind: .codex, rawId: "any-new-id", cwd: "/Users/test/.t3/scratch/2026-11-22-demo", startedAt: now)
+        XCTAssertTrue(res.ownsUnderlying(scratchCodex))
+
+        // 3. First-second pending race match (same provider + cwd + within 20s) -> MUST be owned/suppressed
+        let pendingCodex = makeSession(kind: .codex, rawId: "brand-new-id", cwd: "/Users/test/PendingRepo", startedAt: now)
+        XCTAssertTrue(res.ownsUnderlying(pendingCodex))
+
+        // 4. Genuine standalone Codex session (even if previously imported untouched!) -> MUST NOT be suppressed
+        let realStandalone = makeSession(kind: .codex, rawId: "standalone-codex-id", cwd: "/Users/test/MyRepo", startedAt: now.addingTimeInterval(-120))
+        XCTAssertFalse(res.ownsUnderlying(realStandalone))
+    }
 }

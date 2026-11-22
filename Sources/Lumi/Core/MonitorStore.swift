@@ -229,11 +229,13 @@ final class MonitorStore: ObservableObject {
         let t3 = t3Scanner
         let extra = extraScanner
         scanQueue.async { [weak self] in
-            let combined = agy.scan(lookbackHours: 24)
+            let t3Result = t3.scanDetailed(lookbackHours: 24)
+            let underlying = agy.scan(lookbackHours: 24)
                 + codex.scan(lookbackHours: 24)
                 + claude.scan(lookbackHours: 24)
-                + t3.scan(lookbackHours: 24)
                 + extra.scan(lookbackHours: 24)
+            let dedupedUnderlying = underlying.filter { !t3Result.ownsUnderlying($0) }
+            let combined = dedupedUnderlying + t3Result.sessions
             Task { @MainActor [weak self] in
                 self?.scanInFlight = false
                 self?.applyScanned(combined)

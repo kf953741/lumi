@@ -1,6 +1,46 @@
 import AppKit
 import Foundation
 
+struct T3PendingMatch: Equatable, Sendable {
+    let providerKey: String
+    let normalizedCwd: String
+    let startedAt: Date
+}
+
+struct T3CodeScanResult: Sendable {
+    let sessions: [AgentSession]
+    /// Exact `"<provider>:<nativeId>"` keys of underlying provider sessions owned by T3 Code runs.
+    let ownedNativeSessionIds: Set<String>
+    /// Active T3 Code runs whose `nativeThreadRef` has not yet been written (first-second race window).
+    let pendingMatches: [T3PendingMatch]
+
+    func ownsUnderlying(_ session: AgentSession) -> Bool {
+        guard session.kind != .t3code else { return false }
+        if ownedNativeSessionIds.contains(session.id) {
+            return true
+        }
+        let canonical = "\(session.kind.rawValue):\(session.rawId)"
+        if ownedNativeSessionIds.contains(canonical) {
+            return true
+        }
+        let normCwd = T3CodeScanner.normalizePath(session.cwd)
+        if normCwd.contains("/.t3/scratch")
+            || normCwd.contains("/.t3/worktrees")
+            || normCwd.contains("/.t3/userdata") {
+            return true
+        }
+        if !pendingMatches.isEmpty, !normCwd.isEmpty {
+            let refTime = session.startedAt ?? session.updatedAt
+            for pm in pendingMatches where pm.providerKey == session.kind.rawValue && pm.normalizedCwd == normCwd {
+                if abs(refTime.timeIntervalSince(pm.startedAt)) <= 20 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+}
+
 /// Zero-config live monitor for T3 Code (Desktop & CLI) reading its local SQLite WAL control plane:
 /// - Orchestration v2 (T3 Code v0.1.7+): `~/.t3/userdata/statev2.sqlite`
 /// - Legacy v1 fallback: `~/.t3/userdata/state.sqlite`
@@ -34,15 +74,23 @@ final class T3CodeScanner: @unchecked Sendable {
     }
 
     func scan(lookbackHours: Double = 24, now: Date = Date()) -> [AgentSession] {
+        scanDetailed(lookbackHours: lookbackHours, now: now).sessions
+    }
+
+    func scanDetailed(lookbackHours: Double = 24, now: Date = Date()) -> T3CodeScanResult {
         var results: [AgentSession] = []
         var seenThreadIds = Set<String>()
+        var ownedNativeIds = Set<String>()
+        var pendingMatches: [T3PendingMatch] = []
 
         if let v2 = SQLiteReader(path: v2DbPath) {
-            let v2Sessions = scanV2(reader: v2, lookbackHours: lookbackHours, now: now)
-            for s in v2Sessions {
+            let v2Res = scanV2(reader: v2, lookbackHours: lookbackHours, now: now)
+            for s in v2Res.sessions {
                 seenThreadIds.insert(s.rawId)
                 results.append(s)
             }
+            ownedNativeIds.formUnion(v2Res.ownedNativeSessionIds)
+            pendingMatches.append(contentsOf: v2Res.pendingMatches)
         }
 
         if let v1 = SQLiteReader(path: v1DbPath) {
@@ -50,7 +98,11 @@ final class T3CodeScanner: @unchecked Sendable {
             results.append(contentsOf: v1Sessions)
         }
 
-        return results
+        return T3CodeScanResult(
+            sessions: results,
+            ownedNativeSessionIds: ownedNativeIds,
+            pendingMatches: pendingMatches
+        )
     }
 
     // MARK: - Orchestration v2 (statev2.sqlite)
@@ -90,7 +142,7 @@ final class T3CodeScanner: @unchecked Sendable {
         var latestActivityAt: Date?
     }
 
-    private func scanV2(reader: SQLiteReader, lookbackHours: Double, now: Date) -> [AgentSession] {
+    private func scanV2(reader: SQLiteReader, lookbackHours: Double, now: Date) -> T3CodeScanResult {
         let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
         let appRunning = isT3RunningCheck()
 
@@ -198,8 +250,57 @@ final class T3CodeScanner: @unchecked Sendable {
             runDetails[run.runId] = inspectV2Run(reader: reader, runId: run.runId)
         }
 
+        // 5b. Map T3-owned threads to their underlying provider native session IDs
+        // (e.g. `nativeThreadRef: { driver: "codex", nativeId: "01a20458-..." }`)
+        // so Lumi suppresses duplicate alerts from Codex/Claude/Antigravity scanners.
+        var ownedNativeIds = Set<String>()
+        var threadsWithNativeRef = Set<String>()
+        let ownedThreadIds = Set(
+            threads
+                .filter { !$0.threadId.hasPrefix("import:") || latestRuns[$0.threadId] != nil || runningRuntimeThreads.contains($0.threadId) }
+                .map(\.threadId)
+        )
+        reader.query("""
+            SELECT thread_id, provider, payload_json
+            FROM orchestration_v2_projection_provider_threads;
+            """) { stmt in
+            let tid = SQLiteReader.string(stmt, 0)
+            guard !tid.isEmpty, ownedThreadIds.contains(tid) || latestRuns[tid] != nil else { return }
+            let colProvider = SQLiteReader.string(stmt, 1)
+            let payload = Self.parseJSONObject(SQLiteReader.string(stmt, 2))
+            if let ref = payload["nativeThreadRef"] as? [String: Any],
+               let nativeId = ref["nativeId"] as? String,
+               !nativeId.isEmpty,
+               !nativeId.hasPrefix("pending:") {
+                let rawDriver = (ref["driver"] as? String) ?? colProvider
+                if let key = Self.normalizeProviderKey(rawDriver) {
+                    ownedNativeIds.insert("\(key):\(nativeId)")
+                    threadsWithNativeRef.insert(tid)
+                }
+            }
+        }
+
+        // Also check provider_session_runtime resume_cursor_json for any active/run-backed T3 thread
+        reader.query("""
+            SELECT thread_id, provider_name, resume_cursor_json
+            FROM provider_session_runtime;
+            """) { stmt in
+            let tid = SQLiteReader.string(stmt, 0)
+            guard !tid.isEmpty, ownedThreadIds.contains(tid) else { return }
+            let rawProvider = SQLiteReader.string(stmt, 1)
+            let cursor = Self.parseJSONObject(SQLiteReader.string(stmt, 2))
+            if let nativeId = (cursor["threadId"] as? String) ?? (cursor["sessionId"] as? String),
+               !nativeId.isEmpty,
+               !nativeId.hasPrefix("pending:"),
+               let key = Self.normalizeProviderKey(rawProvider) {
+                ownedNativeIds.insert("\(key):\(nativeId)")
+                threadsWithNativeRef.insert(tid)
+            }
+        }
+
         // 6. Build AgentSession list
         var sessions: [AgentSession] = []
+        var pendingMatches: [T3PendingMatch] = []
         for th in rootThreads {
             let run = latestRuns[th.threadId]
             let runtimeActive = runningRuntimeThreads.contains(th.threadId)
@@ -290,6 +391,17 @@ final class T3CodeScanner: @unchecked Sendable {
 
             let activeSubs = max(detail.activeSubagents, childRunning)
 
+            if isActive,
+               !threadsWithNativeRef.contains(th.threadId),
+               let provKey = Self.normalizeProviderKey(run?.provider ?? th.defaultProvider),
+               !cwd.isEmpty {
+                pendingMatches.append(T3PendingMatch(
+                    providerKey: provKey,
+                    normalizedCwd: Self.normalizePath(cwd),
+                    startedAt: startedAt
+                ))
+            }
+
             sessions.append(AgentSession(
                 id: "t3code:\(th.threadId)",
                 rawId: th.threadId,
@@ -310,7 +422,11 @@ final class T3CodeScanner: @unchecked Sendable {
             ))
         }
 
-        return sessions
+        return T3CodeScanResult(
+            sessions: sessions,
+            ownedNativeSessionIds: ownedNativeIds,
+            pendingMatches: pendingMatches
+        )
     }
 
     private func inspectV2Run(reader: SQLiteReader, runId: String) -> V2RunDetail {
@@ -547,5 +663,28 @@ final class T3CodeScanner: @unchecked Sendable {
             }
         }
         return false
+    }
+
+    static func normalizeProviderKey(_ raw: String) -> String? {
+        let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if low.isEmpty { return nil }
+        if low.contains("codex") || low.contains("openai") { return AgentKind.codex.rawValue }
+        if low.contains("claude") || low.contains("anthropic") { return AgentKind.claude.rawValue }
+        if low.contains("antigravity") || low.contains("agy") { return AgentKind.antigravity.rawValue }
+        if low.contains("cursor") { return AgentKind.cursor.rawValue }
+        if low.contains("gemini") { return AgentKind.gemini.rawValue }
+        if low.contains("opencode") { return AgentKind.opencode.rawValue }
+        return nil
+    }
+
+    static func normalizePath(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("file://"), let url = URL(string: s) {
+            s = url.path
+        }
+        while s.count > 1 && s.hasSuffix("/") {
+            s.removeLast()
+        }
+        return s
     }
 }
