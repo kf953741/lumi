@@ -81,7 +81,7 @@ Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF blo
 
 ### 3. Zero-Config Local Watch + 1-Click Hook Installer
 
-**Antigravity**, **Codex (Desktop & CLI)**, and **Claude Code** work immediately with zero configuration. Want real-time per-tool actions (`Editing ShadowPass.ts`, `Running swift test`) or want to add **Cursor**, **Gemini CLI**, and **OpenCode**? Open **Settings → AI Agents** and click **Install** — Lumi always creates a timestamped backup before touching any config file.
+**Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, and **T3 Code** work immediately with zero configuration. Want real-time per-tool actions (`Editing ShadowPass.ts`, `Running swift test`) or want to add **Cursor**, **Gemini CLI**, and **OpenCode**? Open **Settings → AI Agents** and click **Install** — Lumi always creates a timestamped backup before touching any config file.
 
 <div align="center">
   <img src="docs/assets/settings-hooks.png" width="90%" alt="Lumi Settings and One-Click Hook Installer" />
@@ -92,6 +92,7 @@ Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF blo
 | **Google Antigravity** | Yes | Yes (`~/.gemini/config/hooks.json`) | Yes | Yes | `Cmd+K` Auto-Locate |
 | **OpenAI Codex** (Desktop & CLI) | Yes | Yes (`~/.codex/hooks.json`) | Yes | Yes | Native `codex://` |
 | **Claude Code** | Yes | Yes (`~/.claude/settings.json`) | Yes | Yes | App Focus |
+| **T3 Code** | Yes (`~/.t3/userdata/statev2.sqlite`) | Not needed (auto DB watch) | Yes | Yes | App & Window Focus |
 | **Cursor** | — | Yes (`~/.cursor/hooks.json`) | Hook prompt | — | App Focus |
 | **Gemini CLI** | — | Yes (`~/.gemini/settings.json`) | Hook prompt | — | Terminal Focus |
 | **OpenCode** | — | Yes (`~/.config/opencode/plugins/lumi.js`) | Hook prompt | — | Terminal Focus |

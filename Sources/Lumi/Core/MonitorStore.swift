@@ -129,6 +129,7 @@ final class MonitorStore: ObservableObject {
     private let agyScanner = AntigravityScanner()
     private let codexScanner = CodexScanner()
     private let claudeScanner = ClaudeScanner()
+    private let t3Scanner = T3CodeScanner()
     private let extraScanner = ExtraAgentsScanner()
     private let scanQueue = DispatchQueue(label: "cc.bigsmart.lumi.scan", qos: .utility)
     private let jumpLogger = Logger(subsystem: "cc.bigsmart.Lumi", category: "jump")
@@ -225,11 +226,13 @@ final class MonitorStore: ObservableObject {
         let agy = agyScanner
         let codex = codexScanner
         let claude = claudeScanner
+        let t3 = t3Scanner
         let extra = extraScanner
         scanQueue.async { [weak self] in
             let combined = agy.scan(lookbackHours: 24)
                 + codex.scan(lookbackHours: 24)
                 + claude.scan(lookbackHours: 24)
+                + t3.scan(lookbackHours: 24)
                 + extra.scan(lookbackHours: 24)
             Task { @MainActor [weak self] in
                 self?.scanInFlight = false
@@ -516,6 +519,21 @@ final class MonitorStore: ObservableObject {
             activateApp(bundleIDs: session.kind.targetBundleIDs) { [weak self] in
                 guard let self, shouldAutoLocate else { return }
                 self.waitForFrontmostAndLocate(bundleID: "com.google.antigravity", titleQuery: queryTitle, project: session.project, attempt: 0)
+            }
+            return true
+
+        case .t3code:
+            dismissJumpHint()
+            NSApp.keyWindow?.resignKey()
+            let queryTitle = Self.cleanSearchQuery(from: session.title)
+            activateApp(bundleIDs: session.kind.targetBundleIDs) {
+                guard !queryTitle.isEmpty else { return }
+                for bid in session.kind.targetBundleIDs {
+                    if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first,
+                       Self.tryRaiseMatchingAXWindow(pid: app.processIdentifier, query: queryTitle) {
+                        return
+                    }
+                }
             }
             return true
 

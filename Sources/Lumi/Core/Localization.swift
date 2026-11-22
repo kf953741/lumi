@@ -262,8 +262,8 @@ public struct L10n: Sendable {
     public var agentsHeaderTitle: String { isEnglish ? "One-Click AI Agent Integration" : "一键接入 AI 编程工具" }
     public var agentsHeaderDesc: String {
         isEnglish
-            ? "Antigravity, Codex, and Claude Code work zero-config out of the box. Install Hooks for live tool actions, approval alerts, and extra agents (original configs are backed up automatically)."
-            : "Antigravity、Codex、Claude Code 开箱自动读取本地会话；安装 Hook 后可实时精准显示当前工具动作与审批提醒（自动备份原配置）。"
+            ? "Antigravity, Codex, Claude Code, and T3 Code work zero-config out of the box. Install Hooks for live tool actions, approval alerts, and extra agents (original configs are backed up automatically)."
+            : "Antigravity、Codex、Claude Code 与 T3 Code 开箱自动读取本地会话；安装 Hook 后可实时精准显示当前工具动作与审批提醒（自动备份原配置）。"
     }
     public var btnRefreshStatus: String { isEnglish ? "Refresh" : "刷新状态" }
     public var axBannerTitle: String { isEnglish ? "Antigravity Exact-Conversation Click-to-Jump" : "Antigravity 点击卡片精准直达具体对话" }

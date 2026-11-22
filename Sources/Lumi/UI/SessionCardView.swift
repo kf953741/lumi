@@ -52,6 +52,7 @@ struct BentoSessionRow: View {
         case .antigravity: return "Antigravity"
         case .codex:       return "Codex"
         case .claude:      return "Claude"
+        case .t3code:      return "T3 Code"
         case .cursor:      return "Cursor"
         case .gemini:      return "Gemini"
         case .opencode:    return "OpenCode"

@@ -188,6 +188,7 @@ final class AgentIconCache {
         case .antigravity: return ["com.google.antigravity"]
         case .codex:       return ["com.openai.codex"]
         case .claude:      return ["com.anthropic.claudefordesktop"]
+        case .t3code:      return ["com.t3tools.t3code", "com.t3tools.t3code.dev"]
         case .cursor:      return ["com.todesktop.230313mzl4w4u92"]
         case .gemini:      return ["com.google.gemini"]
         case .opencode:    return ["ai.opencode.desktop", "dev.opencode.app"]
@@ -199,6 +200,7 @@ final class AgentIconCache {
         case .antigravity: return ["Antigravity.app"]
         case .codex:       return ["Codex.app"]
         case .claude:      return ["Claude.app"]
+        case .t3code:      return ["T3 Code (Beta).app", "T3 Code.app"]
         case .cursor:      return ["Cursor.app"]
         case .gemini:      return ["Gemini.app"]
         case .opencode:    return ["OpenCode.app"]
@@ -263,6 +265,11 @@ struct NativeAgentIconView: View {
         case .claude:
             return LinearGradient(
                 colors: [Color(red: 0.875, green: 0.502, blue: 0.365), Color(red: 0.780, green: 0.396, blue: 0.275)],
+                startPoint: .top, endPoint: .bottom
+            )
+        case .t3code:
+            return LinearGradient(
+                colors: [Color(red: 0.145, green: 0.165, blue: 0.240), Color(red: 0.075, green: 0.085, blue: 0.130)],
                 startPoint: .top, endPoint: .bottom
             )
         case .cursor:
@@ -357,6 +364,24 @@ struct AgentVectorGlyph: View {
                 }
                 let centerDot = CGRect(x: cx - s * 0.09, y: cy - s * 0.09, width: s * 0.18, height: s * 0.18)
                 ctx.fill(Path(ellipseIn: centerDot), with: .color(color))
+
+            case .t3code:
+                // Geometric "T3" monogram fallback when T3 Code desktop bundle isn't installed
+                let lw = s * 0.125
+                var tBar = Path()
+                tBar.move(to: CGPoint(x: cx - s * 0.36, y: cy - s * 0.24))
+                tBar.addLine(to: CGPoint(x: cx - s * 0.02, y: cy - s * 0.24))
+                tBar.move(to: CGPoint(x: cx - s * 0.19, y: cy - s * 0.24))
+                tBar.addLine(to: CGPoint(x: cx - s * 0.19, y: cy + s * 0.28))
+                ctx.stroke(tBar, with: .color(color), style: StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round))
+
+                var three = Path()
+                three.move(to: CGPoint(x: cx + s * 0.07, y: cy - s * 0.24))
+                three.addLine(to: CGPoint(x: cx + s * 0.32, y: cy - s * 0.24))
+                three.addLine(to: CGPoint(x: cx + s * 0.16, y: cy))
+                three.addQuadCurve(to: CGPoint(x: cx + s * 0.33, y: cy + s * 0.15), control: CGPoint(x: cx + s * 0.33, y: cy))
+                three.addQuadCurve(to: CGPoint(x: cx + s * 0.07, y: cy + s * 0.27), control: CGPoint(x: cx + s * 0.32, y: cy + s * 0.30))
+                ctx.stroke(three, with: .color(color.opacity(0.92)), style: StrokeStyle(lineWidth: lw * 0.92, lineCap: .round, lineJoin: .round))
 
             case .cursor:
                 var arrow = Path()

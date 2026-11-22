@@ -79,9 +79,9 @@
   <img src="docs/assets/mascot-showcase.png" width="100%" alt="Lumi Ember 萌宠 6 种情绪与 6 套主题配色" />
 </div>
 
-### 3. 开箱即用 + 6 大 AI 工具一键接入
+### 3. 开箱即用 + 7 大 AI 工具原生支持
 
-**Antigravity**、**Codex（桌面版 & CLI）**、**Claude Code** 无需任何配置打开即追踪。在 **设置 → AI 工具接入** 中点一下按钮即可挂载 Hook，获取实时工具动作并支持 **Cursor**、**Gemini CLI**、**OpenCode**（写入前自动创建带时间戳的原配置备份）。
+**Antigravity**、**Codex（桌面版 & CLI）**、**Claude Code** 与 **T3 Code** 无需任何配置打开即追踪。在 **设置 → AI 工具接入** 中点一下按钮即可挂载 Hook，获取实时工具动作并支持 **Cursor**、**Gemini CLI**、**OpenCode**（写入前自动创建带时间戳的原配置备份）。
 
 <div align="center">
   <img src="docs/assets/settings-hooks.png" width="90%" alt="Lumi 设置页与一键 Hook 接入" />
@@ -92,6 +92,7 @@
 | **Google Antigravity** | 支持 | 支持（`~/.gemini/config/hooks.json`） | 支持 | 支持 | `⌘K` 精准切入对话 |
 | **OpenAI Codex**（桌面版 & CLI） | 支持 | 支持（`~/.codex/hooks.json`） | 支持 | 支持 | 原生 `codex://` 深链 |
 | **Claude Code** | 支持 | 支持（`~/.claude/settings.json`） | 支持 | 支持 | 切回应用窗口 |
+| **T3 Code** | 支持（`~/.t3/userdata/statev2.sqlite`） | 免配置自动监听 | 支持 | 支持 | 切回应用与窗口 |
 | **Cursor** | — | 支持（`~/.cursor/hooks.json`） | Hook 提示词 | — | 切回应用窗口 |
 | **Gemini CLI** | — | 支持（`~/.gemini/settings.json`） | Hook 提示词 | — | 切回终端 |
 | **OpenCode** | — | 支持（`~/.config/opencode/plugins/lumi.js`） | Hook 提示词 | — | 切回终端 |

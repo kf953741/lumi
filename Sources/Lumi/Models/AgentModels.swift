@@ -7,6 +7,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case antigravity
     case codex
     case claude
+    case t3code
     case cursor
     case gemini
     case opencode
@@ -18,6 +19,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: return "AGY"
         case .codex: return "Codex"
         case .claude: return "Claude"
+        case .t3code: return "T3 Code"
         case .cursor: return "Cursor"
         case .gemini: return "Gemini"
         case .opencode: return "OpenCode"
@@ -29,6 +31,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: return "Antigravity"
         case .codex: return "Codex"
         case .claude: return "Claude Code"
+        case .t3code: return "T3 Code"
         case .cursor: return "Cursor"
         case .gemini: return "Gemini CLI"
         case .opencode: return "OpenCode"
@@ -40,6 +43,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: return Color(red: 0.74, green: 0.48, blue: 1.00)
         case .codex:       return Color(red: 0.16, green: 0.84, blue: 0.74)
         case .claude:      return Color(red: 0.96, green: 0.56, blue: 0.32)
+        case .t3code:      return Color(red: 0.42, green: 0.56, blue: 1.00)
         case .cursor:      return Color(red: 0.46, green: 0.72, blue: 1.00)
         case .gemini:      return Color(red: 0.36, green: 0.64, blue: 1.00)
         case .opencode:    return Color(red: 0.56, green: 0.86, blue: 0.44)
@@ -51,6 +55,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: return ["com.google.antigravity"]
         case .codex:       return ["com.openai.codex", "com.openai.chat"]
         case .claude:      return ["com.anthropic.claudefordesktop", "com.microsoft.VSCode", "com.googlecode.iterm2", "com.apple.Terminal"]
+        case .t3code:      return ["com.t3tools.t3code", "com.t3tools.t3code.dev"]
         case .cursor:      return ["com.todesktop.230313mzl4w4u92"]
         case .gemini:      return ["com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal"]
         case .opencode:    return ["com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal"]
@@ -62,6 +67,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: return "~/.gemini/config/hooks.json（+ 自动读取会话库）"
         case .codex:       return "~/.codex/hooks.json（+ 免配置自动追踪桌面版与 CLI）"
         case .claude:      return "~/.claude/settings.json（+ 自动读取本地会话）"
+        case .t3code:      return "~/.t3/userdata/statev2.sqlite（免配置自动监听）"
         case .cursor:      return "~/.cursor/hooks.json"
         case .gemini:      return "~/.gemini/settings.json"
         case .opencode:    return "~/.config/opencode/plugins/lumi.js"
@@ -73,6 +79,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: return "~/.gemini/config/hooks.json (+ auto DB watch)"
         case .codex:       return "~/.codex/hooks.json (+ zero-config Desktop & CLI watch)"
         case .claude:      return "~/.claude/settings.json (+ zero-config session watch)"
+        case .t3code:      return "~/.t3/userdata/statev2.sqlite (zero-config auto DB watch)"
         case .cursor:      return "~/.cursor/hooks.json"
         case .gemini:      return "~/.gemini/settings.json"
         case .opencode:    return "~/.config/opencode/plugins/lumi.js"
@@ -93,6 +100,7 @@ public enum AgentFilter: String, CaseIterable, Identifiable, Sendable {
     case antigravity = "AGY"
     case codex = "Codex"
     case claude = "Claude"
+    case t3code = "T3 Code"
     case others = "其他"
 
     public var id: String { rawValue }
@@ -104,6 +112,7 @@ public enum AgentFilter: String, CaseIterable, Identifiable, Sendable {
         case .antigravity: return "Antigravity"
         case .codex:       return "Codex"
         case .claude:      return "Claude"
+        case .t3code:      return "T3 Code"
         case .others:      return "Others"
         }
     }
@@ -114,6 +123,7 @@ public enum AgentFilter: String, CaseIterable, Identifiable, Sendable {
         case .antigravity: return kind == .antigravity
         case .codex: return kind == .codex
         case .claude: return kind == .claude
+        case .t3code: return kind == .t3code
         case .others: return kind == .cursor || kind == .gemini || kind == .opencode
         }
     }

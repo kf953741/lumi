@@ -32,6 +32,9 @@ enum HookInstaller {
             return containsLumiCommand(at: codexHooksPath)
         case .claude:
             return containsLumiCommand(at: claudeSettingsPath)
+        case .t3code:
+            let fm = FileManager.default
+            return fm.fileExists(atPath: t3StateV2Path) || fm.fileExists(atPath: t3StateV1Path)
         case .gemini:
             return containsLumiCommand(at: geminiSettingsPath)
         case .cursor:
@@ -47,6 +50,7 @@ enum HookInstaller {
         case .antigravity: try installAntigravity()
         case .codex:       try installCodex()
         case .claude:      try installClaude()
+        case .t3code:      break // Zero-config native SQLite watch — no hook file needed
         case .gemini:      try installGemini()
         case .cursor:      try installCursor()
         case .opencode:    try installOpenCode()
@@ -58,6 +62,7 @@ enum HookInstaller {
         case .antigravity: try uninstallAntigravity()
         case .codex:       try removeFromGroupedHooks(at: codexHooksPath)
         case .claude:      try removeFromGroupedHooks(at: claudeSettingsPath)
+        case .t3code:      break // Zero-config native SQLite watch — no hook file needed
         case .gemini:      try removeFromGroupedHooks(at: geminiSettingsPath)
         case .cursor:      try removeFromGroupedHooks(at: cursorHooksPath)
         case .opencode:
@@ -75,6 +80,8 @@ enum HookInstaller {
     private static var geminiSettingsPath: String { "\(NSHomeDirectory())/.gemini/settings.json" }
     private static var cursorHooksPath: String { "\(NSHomeDirectory())/.cursor/hooks.json" }
     private static var openCodePluginPath: String { "\(NSHomeDirectory())/.config/opencode/plugins/lumi.js" }
+    private static var t3StateV2Path: String { "\(NSHomeDirectory())/.t3/userdata/statev2.sqlite" }
+    private static var t3StateV1Path: String { "\(NSHomeDirectory())/.t3/userdata/state.sqlite" }
 
     // MARK: - Antigravity
 

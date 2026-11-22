@@ -349,7 +349,14 @@ struct SettingsView: View {
                                 HStack(spacing: 6) {
                                     Text(kind.displayName)
                                         .font(.system(size: 13, weight: .semibold))
-                                    if installed {
+                                    if kind == .t3code {
+                                        Text(installed ? t.autoWatchReady : (store.isEnglish ? "Auto-Detect" : "自动检测"))
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundColor(installed ? Color(red: 0.18, green: 0.78, blue: 0.48) : .secondary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 1.5)
+                                            .background(Capsule().fill(installed ? Color.green.opacity(0.15) : Color.primary.opacity(0.07)))
+                                    } else if installed {
                                         Text(t.hookActive)
                                             .font(.system(size: 10, weight: .semibold))
                                             .foregroundColor(Color(red: 0.18, green: 0.78, blue: 0.48))
@@ -373,19 +380,28 @@ struct SettingsView: View {
 
                             Spacer()
 
-                            Button(installed ? t.btnUninstallHook : t.btnInstallHook) {
-                                if let err = store.toggleHook(for: kind) {
-                                    hookMessage = t.hookFail(kind.displayName, err)
-                                } else {
-                                    let nowOn = store.hookStatus[kind] ?? false
-                                    hookMessage = nowOn
-                                        ? t.hookInstalledMsg(kind.displayName)
-                                        : t.hookRemovedMsg(kind.displayName)
+                            if kind == .t3code {
+                                Text(store.isEnglish ? "Zero-Config" : "免配置")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+                            } else {
+                                Button(installed ? t.btnUninstallHook : t.btnInstallHook) {
+                                    if let err = store.toggleHook(for: kind) {
+                                        hookMessage = t.hookFail(kind.displayName, err)
+                                    } else {
+                                        let nowOn = store.hookStatus[kind] ?? false
+                                        hookMessage = nowOn
+                                            ? t.hookInstalledMsg(kind.displayName)
+                                            : t.hookRemovedMsg(kind.displayName)
+                                    }
                                 }
+                                .buttonStyle(.bordered)
+                                .tint(installed ? .secondary : .accentColor)
+                                .controlSize(.small)
                             }
-                            .buttonStyle(.bordered)
-                            .tint(installed ? .secondary : .accentColor)
-                            .controlSize(.small)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
