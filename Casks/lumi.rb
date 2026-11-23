@@ -1,6 +1,6 @@
 cask "lumi" do
-  version "1.4.0"
-  sha256 "ca3a3f1fdc7f15e9ccaf25b25068d226f202863700e0f2913089dc820d2116a6"
+  version "1.4.1"
+  sha256 "3da42518271028a5119417513ff05ea8ad2c2b9aa1d3b7755f6992a563c22b46"
 
   url "https://github.com/kf953741/lumi/releases/download/v#{version}/Lumi-v#{version}-arm64.dmg"
   name "Lumi"

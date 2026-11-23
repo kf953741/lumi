@@ -1088,7 +1088,9 @@ final class MonitorStore: ObservableObject {
                 let compDate = s.completedAt ?? s.updatedAt
                 let compTs = compDate.timeIntervalSince1970
 
-                if isFirst && ackedAt[s.id] == nil && now.timeIntervalSince(compDate) > 900 {
+                // Auto-ack historical completions whenever a session is seen for the first time (`prev == nil`),
+                // whether on initial scan or appearing later (e.g., metadata sync, reopened DB, or backdated history).
+                if prev == nil && ackedAt[s.id] == nil && (now.timeIntervalSince(compDate) > 900 || (!isFirst && compDate < launchTime)) {
                     ackedAt[s.id] = compTs
                     ackDirty = true
                 }
@@ -1156,7 +1158,9 @@ final class MonitorStore: ObservableObject {
         // Never let a pending settle timer carry over across a scan where the session disappeared!
         pendingFinishSince = pendingFinishSince.filter { activeIds.contains($0.key) }
 
-        // Periodic bounded-memory eviction for long-running sessions
+        // Periodic bounded-memory eviction for long-running sessions.
+        // CRITICAL: Never evict `ackedAt` for sessions still present in `activeIds`, otherwise an
+        // older (>7d) completed session whose ack timestamp was pruned would resurrect as unread!
         if now.timeIntervalSince(lastPruneAt) > 600 {
             lastPruneAt = now
             previousStatus = previousStatus.filter { activeIds.contains($0.key) }
@@ -1165,9 +1169,9 @@ final class MonitorStore: ObservableObject {
             notifiedNeedsInputKey = notifiedNeedsInputKey.filter { activeIds.contains($0.key) }
             let cutoff7d = now.timeIntervalSince1970 - 7 * 86400
             let beforeCount = ackedAt.count
-            ackedAt = ackedAt.filter { $0.value >= cutoff7d }
+            ackedAt = ackedAt.filter { activeIds.contains($0.key) || $0.value >= cutoff7d }
             if ackedAt.count != beforeCount { ackDirty = true }
-            notifiedCompletedAt = notifiedCompletedAt.filter { $0.value >= cutoff7d }
+            notifiedCompletedAt = notifiedCompletedAt.filter { activeIds.contains($0.key) || $0.value >= cutoff7d }
         }
 
         if ackDirty { saveAckState() }
@@ -1290,7 +1294,7 @@ final class MonitorStore: ObservableObject {
     private func loadAckState() {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
               let dict = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else { return }
-        let cutoff = Date().timeIntervalSince1970 - 7 * 86400
+        let cutoff = Date().timeIntervalSince1970 - 30 * 86400
         ackedAt = dict.filter { $0.value >= cutoff }
     }
 

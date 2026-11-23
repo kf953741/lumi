@@ -23,6 +23,8 @@ public enum CodexRolloutParser {
         var durationSec: TimeInterval?
         var cwd = ""
 
+        var sawMetadataOnlyEvent = false
+
         for rawLine in lines where !rawLine.isEmpty {
             guard let lineData = rawLine.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
@@ -37,7 +39,10 @@ public enum CodexRolloutParser {
                 if startedAt == nil { startedAt = parseISO(obj["timestamp"] as? String) }
             } else if topType == "event_msg" {
                 let ptype = payload["type"] as? String ?? ""
-                if ptype == "task_started" {
+                if ptype == "thread_settings_applied" || ptype == "thread_renamed" || ptype == "token_count" {
+                    // Non-turn background metadata sync (e.g. Codex Desktop applying thread settings to old threads)
+                    sawMetadataOnlyEvent = true
+                } else if ptype == "task_started" {
                     status = .running
                     currentAction = "思考规划中…"
                     lastAgentMessage = ""
@@ -124,6 +129,12 @@ public enum CodexRolloutParser {
             } else {
                 resolved = st
             }
+        } else if sawMetadataOnlyEvent {
+            // Tail contained only metadata events (e.g. `thread_settings_applied`) with no active turn:
+            // never misclassify a background settings touch as a live running turn or fresh completion!
+            resolved = .done
+            currentAction = "已完成"
+            completedAt = nil
         } else if now.timeIntervalSince(mtime) < 60 {
             resolved = .running
             currentAction = "执行中…"
@@ -355,9 +366,24 @@ final class CodexScanner: @unchecked Sendable {
 
             let isCLI = srcLow == "cli" || srcLow == "exec"
             let hookTime = hookFresher ? (hook?.updatedAt ?? .distantPast) : .distantPast
-            let updatedAt = max(effectiveMtime, max(hookTime, max(snap?.completedAt ?? .distantPast, childNeeds?.0 ?? .distantPast)))
             let isActive = (status == .running || status == .needsInput)
             let resolvedCompletedAt: Date? = isActive ? nil : (hookFresher ? (hook?.completedAt ?? hook?.updatedAt) : (snap?.completedAt ?? effectiveMtime))
+
+            // Ignore old completed threads woken up solely by background metadata syncs
+            // (e.g. Codex Desktop appending `thread_settings_applied` to a month-old rollout).
+            if !isActive {
+                let realTurnTime = resolvedCompletedAt ?? .distantPast
+                if snap != nil && snap?.completedAt == nil && !hookFresher {
+                    continue
+                }
+                if realTurnTime < cutoff {
+                    continue
+                }
+            }
+
+            let updatedAt = isActive
+                ? max(effectiveMtime, max(hookTime, childNeeds?.0 ?? .distantPast))
+                : (resolvedCompletedAt ?? effectiveMtime)
 
             sessions.append(AgentSession(
                 id: "codex:\(th.id)",

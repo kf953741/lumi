@@ -1181,4 +1181,80 @@ final class LumiCoreTests: XCTestCase {
         let expired = scanner.scan(lookbackHours: 24, now: t0.addingTimeInterval(20))
         XCTAssertNil(expired.first { $0.title == "Scrolled Task" })
     }
+
+    func testCodexThreadSettingsAppliedOnOldThreadDoesNotResurrectAsUnread() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-codex-settings-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let now = Date()
+        let monthAgoTs = Int64(now.addingTimeInterval(-26 * 86400).timeIntervalSince1970)
+        let nowTs = Int64(now.timeIntervalSince1970)
+
+        // Rollout completed 26 days ago, then Codex Desktop appended `thread_settings_applied` today
+        let rolloutPath = dir.appendingPathComponent("old-rollout.jsonl").path
+        let content = """
+        {"timestamp":"2026-10-28T09:22:50.086Z","type":"event_msg","payload":{"type":"task_complete","completed_at":\(monthAgoTs),"started_at":\(monthAgoTs - 1582),"duration_ms":1582000}}
+        {"timestamp":"2026-11-23T07:22:48.558Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"old-1"}}
+        """
+        try content.write(toFile: rolloutPath, atomically: true, encoding: .utf8)
+
+        let dbPath = dir.appendingPathComponent("state_5.sqlite").path
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &rawDB), SQLITE_OK)
+        let sql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT);
+        CREATE TABLE threads (
+            id TEXT PRIMARY KEY, rollout_path TEXT, updated_at INTEGER, cwd TEXT,
+            title TEXT, first_user_message TEXT, agent_nickname TEXT, source TEXT, archived INTEGER
+        );
+        INSERT INTO threads VALUES ('old-1', '\(rolloutPath)', \(nowTs), '/tmp/lia', '5090 g0.5 piper', '', '', 'vscode', 0);
+        """
+        XCTAssertEqual(sqlite3_exec(rawDB, sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(rawDB), SQLITE_OK)
+
+        let scanner = CodexScanner(stateDBPath: dbPath, sessionIndexPath: dir.appendingPathComponent("idx.jsonl").path)
+        let sessions = scanner.scan(lookbackHours: 24, now: now, preloadedHooks: [:])
+        // Must be filtered out completely since real task_complete was 26 days ago!
+        XCTAssertTrue(sessions.isEmpty)
+
+        // Also verify metadata-only tail (without task_complete in tail) never triggers false `.running`
+        let metaOnlyLines = [#"{"timestamp":"2026-11-23T07:22:48.558Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"old-2"}}"#]
+        let metaState = CodexRolloutParser.parse(lines: metaOnlyLines, mtime: now, now: now)
+        XCTAssertEqual(metaState.status, .done)
+        XCTAssertNil(metaState.completedAt)
+    }
+
+    @MainActor
+    func testMonitorStoreDoesNotResurrectAckedOldSessionAfterPruneOrMidSessionAppear() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-store-prune-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let store = MonitorStore(
+            statePath: dir.appendingPathComponent("read_state.json").path,
+            suppressSystemSideEffects: true
+        )
+        let t0 = Date()
+        let monthAgo = t0.addingTimeInterval(-26 * 86400)
+        let oldSession = AgentSession(
+            id: "codex:old-ghost", rawId: "old-ghost", kind: .codex, title: "Old Ghost",
+            project: "lia", cwd: "/tmp/lia", isCLI: false, status: .done,
+            currentAction: "已完成", detailSummary: "", startedAt: monthAgo.addingTimeInterval(-60),
+            updatedAt: monthAgo, completedAt: monthAgo, durationSec: 60, activeSubagents: 0, isUnread: false
+        )
+
+        // Initial scan with empty list, then old session appears mid-session -> MUST auto-ack, NOT become unread!
+        store.applyScanned([], now: t0)
+        store.applyScanned([oldSession], now: t0.addingTimeInterval(5))
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // Advance past the 600s pruner interval -> ack MUST be preserved while session is active, NEVER resurrecting as unread!
+        store.applyScanned([oldSession], now: t0.addingTimeInterval(700))
+        store.applyScanned([oldSession], now: t0.addingTimeInterval(702))
+        XCTAssertEqual(store.totalUnreadCount, 0)
+    }
 }

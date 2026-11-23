@@ -13,7 +13,7 @@ public enum UpdateChecker {
     private static let fallbackReleasesURL = URL(string: "https://github.com/kf953741/lumi/releases")!
 
     public static var currentAppVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.4.0"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.4.1"
     }
 
     public static func checkLatest() async -> UpdateCheckResult {
