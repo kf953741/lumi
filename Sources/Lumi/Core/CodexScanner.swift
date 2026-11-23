@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct CodexRolloutState: Equatable, Sendable {
@@ -11,18 +12,6 @@ public struct CodexRolloutState: Equatable, Sendable {
 }
 
 public enum CodexRolloutParser {
-    private static let isoFracFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    private static let isoBasicFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
     /// Parses the tail lines of a Codex rollout JSONL file.
     /// Safe for long-running turns (>256KB) where `task_started` has scrolled off the tail window.
     public static func parse(lines: [String], mtime: Date, now: Date) -> CodexRolloutState {
@@ -59,7 +48,7 @@ public enum CodexRolloutParser {
                     status = .done
                     currentAction = "已完成"
                     if let msg = payload["last_agent_message"] as? String, !msg.isEmpty {
-                        lastAgentMessage = msg
+                        lastAgentMessage = String(msg.prefix(400))
                     }
                     completedAt = parseEpoch(payload["completed_at"]) ?? parseISO(obj["timestamp"] as? String) ?? mtime
                     if let s = parseEpoch(payload["started_at"]) { startedAt = s }
@@ -115,7 +104,7 @@ public enum CodexRolloutParser {
                           let content = payload["content"] as? [[String: Any]] {
                     for part in content {
                         if let txt = part["text"] as? String, !txt.isEmpty {
-                            lastAgentMessage = txt
+                            lastAgentMessage = String(txt.prefix(400))
                             if (payload["phase"] as? String) == "final_answer", status == .running {
                                 currentAction = "输出回复中…"
                             }
@@ -149,7 +138,7 @@ public enum CodexRolloutParser {
             currentAction: currentAction,
             lastAgentMessage: lastAgentMessage,
             startedAt: startedAt,
-            completedAt: completedAt,
+            completedAt: (resolved == .running || resolved == .needsInput) ? nil : completedAt,
             durationSec: durationSec,
             cwd: cwd
         )
@@ -170,8 +159,7 @@ public enum CodexRolloutParser {
 
     private static func parseISO(_ raw: String?) -> Date? {
         guard let raw, !raw.isEmpty else { return nil }
-        if let d = isoFracFormatter.date(from: raw) { return d }
-        return isoBasicFormatter.date(from: raw)
+        return FastISO8601Parser.parse(raw)
     }
 }
 
@@ -182,13 +170,36 @@ final class CodexScanner: @unchecked Sendable {
     private var cachedIndexMtime: Date?
     private var threadNameById: [String: String] = [:]
 
+    private struct FileMeta: Equatable {
+        let inode: UInt64
+        let size: UInt64
+        let mtimeSec: Int
+        let mtimeNsec: Int
+
+        var mtime: Date {
+            Date(timeIntervalSince1970: TimeInterval(mtimeSec) + TimeInterval(mtimeNsec) / 1_000_000_000.0)
+        }
+
+        static func read(_ path: String) -> FileMeta? {
+            var st = stat()
+            guard stat(path, &st) == 0 else { return nil }
+            return FileMeta(
+                inode: UInt64(st.st_ino),
+                size: UInt64(max(0, st.st_size)),
+                mtimeSec: st.st_mtimespec.tv_sec,
+                mtimeNsec: st.st_mtimespec.tv_nsec
+            )
+        }
+    }
+
     private struct CachedRollout {
-        let fileSize: UInt64
-        let mtime: Date
+        let meta: FileMeta
         let state: CodexRolloutState
     }
 
     private var rolloutCache: [String: CachedRollout] = [:]
+    private var lastDBFingerprint: String = ""
+    private var cachedDBPayload: ([DBThread], [String: String])?
     private var lastKnownSessions: [AgentSession] = []
 
     private struct DBThread {
@@ -202,75 +213,75 @@ final class CodexScanner: @unchecked Sendable {
         let source: String
     }
 
-    init() {
-        let home = NSHomeDirectory()
-        self.stateDBPath = "\(home)/.codex/state_5.sqlite"
-        self.sessionIndexPath = "\(home)/.codex/session_index.jsonl"
+    init(stateDBPath: String? = nil, sessionIndexPath: String? = nil) {
+        let envHome = ProcessInfo.processInfo.environment["CODEX_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let codexDir: String
+        if let envHome, !envHome.isEmpty {
+            codexDir = (envHome as NSString).expandingTildeInPath
+        } else {
+            codexDir = "\(NSHomeDirectory())/.codex"
+        }
+        self.stateDBPath = stateDBPath ?? "\(codexDir)/state_5.sqlite"
+        self.sessionIndexPath = sessionIndexPath ?? "\(codexDir)/session_index.jsonl"
     }
 
-    func scan(lookbackHours: Double = 24) -> [AgentSession] {
+    func scan(lookbackHours: Double = 24, now: Date = Date(), preloadedHooks: [String: LiveHookRecord]? = nil) -> [AgentSession] {
         guard FileManager.default.fileExists(atPath: stateDBPath) else {
             lastKnownSessions = []
+            cachedDBPayload = nil
+            lastDBFingerprint = ""
+            rolloutCache.removeAll()
             return []
         }
         refreshSessionIndexIfNeeded()
-        let now = Date()
         let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
-        guard let reader = SQLiteReader(path: stateDBPath) else { return lastKnownSessions }
-
-        var parentOfChild: [String: String] = [:]
-        _ = reader.query("SELECT parent_thread_id, child_thread_id FROM thread_spawn_edges;") { stmt in
-            let parent = SQLiteReader.string(stmt, 0)
-            let child = SQLiteReader.string(stmt, 1)
-            if !parent.isEmpty && !child.isEmpty { parentOfChild[child] = parent }
+        guard let (threads, parentOfChild) = loadDBThreadsAndEdges() else {
+            return lastKnownSessions
         }
 
-        var threads: [DBThread] = []
-        let sql = """
-        SELECT id, rollout_path, updated_at, cwd, title, first_user_message,
-               COALESCE(agent_nickname, ''), source
-        FROM threads
-        WHERE archived = 0
-          AND (trim(title) != '' OR trim(first_user_message) != '')
-        ORDER BY updated_at DESC
-        LIMIT 120;
-        """
-        let ok = reader.query(sql) { stmt in
-            let id = SQLiteReader.string(stmt, 0)
-            guard !id.isEmpty else { return }
-            threads.append(DBThread(
-                id: id,
-                rolloutPath: SQLiteReader.string(stmt, 1),
-                updatedAt: Date(timeIntervalSince1970: TimeInterval(SQLiteReader.int64(stmt, 2))),
-                cwd: SQLiteReader.string(stmt, 3),
-                title: SQLiteReader.string(stmt, 4),
-                firstUserMessage: SQLiteReader.string(stmt, 5),
-                agentNickname: SQLiteReader.string(stmt, 6),
-                source: SQLiteReader.string(stmt, 7)
-            ))
-        }
-        guard ok else { return lastKnownSessions }
-
-        let fm = FileManager.default
         var parsedMap: [String: CodexRolloutState] = [:]
         var rolloutMtimeMap: [String: Date] = [:]
         var activeSubagents: [String: Int] = [:]
+        var subagentNeedsInput: [String: (Date, String)] = [:]
+        var seenRolloutPaths = Set<String>()
 
         for th in threads {
-            let fileMtime = (try? fm.attributesOfItem(atPath: th.rolloutPath))?[.modificationDate] as? Date
+            let meta = th.rolloutPath.isEmpty ? nil : FileMeta.read(th.rolloutPath)
+            let fileMtime = meta?.mtime
             let effectiveMtime = max(th.updatedAt, fileMtime ?? .distantPast)
             guard effectiveMtime >= cutoff else { continue }
             if let fileMtime { rolloutMtimeMap[th.id] = fileMtime }
 
-            if let snap = parseRolloutTail(path: th.rolloutPath, now: now) {
-                parsedMap[th.id] = snap
-                if let parent = rootParent(of: th.id, map: parentOfChild), snap.status == .running {
-                    activeSubagents[parent, default: 0] += 1
+            if let meta {
+                seenRolloutPaths.insert(th.rolloutPath)
+                if let snap = parseRolloutTail(path: th.rolloutPath, meta: meta, now: now) {
+                    parsedMap[th.id] = snap
+                    if let parent = rootParent(of: th.id, map: parentOfChild) {
+                        if snap.status == .running {
+                            activeSubagents[parent, default: 0] += 1
+                        } else if snap.status == .needsInput {
+                            activeSubagents[parent, default: 0] += 1
+                            let action = snap.currentAction.isEmpty ? "等待你的审批或回复" : snap.currentAction
+                            if let existing = subagentNeedsInput[parent] {
+                                if effectiveMtime > existing.0 {
+                                    subagentNeedsInput[parent] = (effectiveMtime, action)
+                                }
+                            } else {
+                                subagentNeedsInput[parent] = (effectiveMtime, action)
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        let hookMap = LiveHookRecord.loadAll(forAgent: "codex")
+        // Bounded cache eviction: drop rollout entries no longer in the recent thread window
+        if rolloutCache.count > seenRolloutPaths.count + 24 {
+            rolloutCache = rolloutCache.filter { seenRolloutPaths.contains($0.key) }
+        }
+
+        let hookMap = preloadedHooks ?? LiveHookRecord.loadAll(forAgent: "codex")
         var sessions: [AgentSession] = []
         for th in threads {
             let srcLow = th.source.lowercased()
@@ -280,8 +291,9 @@ final class CodexScanner: @unchecked Sendable {
             let fileMtime = rolloutMtimeMap[th.id]
             let snap = parsedMap[th.id]
             let subCount = activeSubagents[th.id] ?? 0
+            let childNeeds = subagentNeedsInput[th.id]
             let effectiveMtime = max(th.updatedAt, fileMtime ?? .distantPast)
-            guard effectiveMtime >= cutoff || snap?.status == .running || subCount > 0 else { continue }
+            guard effectiveMtime >= cutoff || snap?.status == .running || snap?.status == .needsInput || subCount > 0 || childNeeds != nil else { continue }
             let effectiveCwd = (snap?.cwd.isEmpty == false ? snap?.cwd : nil) ?? th.cwd
             let project = ProjectNameHelper.projectName(from: effectiveCwd)
 
@@ -299,10 +311,25 @@ final class CodexScanner: @unchecked Sendable {
 
             var status = snap?.status ?? .done
             let hook = hookMap[th.id]
+            let hookFresher = hook.map { $0.updatedAt.timeIntervalSince(effectiveMtime) > 1.5 } ?? false
             if let hook, hook.state == "needs_input",
                now.timeIntervalSince(hook.updatedAt) < 1200,
                hook.updatedAt.timeIntervalSince(effectiveMtime) > -5 {
                 status = .needsInput
+            } else if childNeeds != nil {
+                status = .needsInput
+            } else if let hook, hookFresher {
+                if hook.state == "canceled" {
+                    status = .canceled
+                } else if hook.state == "error" {
+                    status = .error
+                } else if hook.state == "done" && subCount == 0 {
+                    status = .done
+                } else if hook.state == "running" && now.timeIntervalSince(hook.updatedAt) < 180 {
+                    status = .running
+                } else if subCount > 0 && status != .running && status != .needsInput {
+                    status = .running
+                }
             } else if subCount > 0 && status != .running && status != .needsInput {
                 status = .running
             }
@@ -310,12 +337,16 @@ final class CodexScanner: @unchecked Sendable {
             let action: String
             if status == .needsInput {
                 if let h = hook, !h.action.isEmpty, h.state == "needs_input" { action = h.action }
+                else if let cn = childNeeds { action = cn.1 }
                 else if let a = snap?.currentAction, !a.isEmpty { action = a }
                 else { action = "等待你的审批或回复" }
             } else if status == .running {
-                if let a = snap?.currentAction, !a.isEmpty { action = a }
+                if let h = hook, hookFresher, h.state == "running", !h.action.isEmpty { action = h.action }
+                else if let a = snap?.currentAction, !a.isEmpty { action = a }
                 else if subCount > 0 { action = "等待 \(subCount) 个子 Agent 执行…" }
                 else { action = "思考与执行中…" }
+            } else if status == .error {
+                action = (hook?.action.isEmpty == false) ? (hook?.action ?? "执行出错") : "执行出错"
             } else if status == .canceled {
                 action = "已手动停止"
             } else {
@@ -323,7 +354,10 @@ final class CodexScanner: @unchecked Sendable {
             }
 
             let isCLI = srcLow == "cli" || srcLow == "exec"
-            let updatedAt = max(effectiveMtime, snap?.completedAt ?? .distantPast)
+            let hookTime = hookFresher ? (hook?.updatedAt ?? .distantPast) : .distantPast
+            let updatedAt = max(effectiveMtime, max(hookTime, max(snap?.completedAt ?? .distantPast, childNeeds?.0 ?? .distantPast)))
+            let isActive = (status == .running || status == .needsInput)
+            let resolvedCompletedAt: Date? = isActive ? nil : (hookFresher ? (hook?.completedAt ?? hook?.updatedAt) : (snap?.completedAt ?? effectiveMtime))
 
             sessions.append(AgentSession(
                 id: "codex:\(th.id)",
@@ -336,16 +370,77 @@ final class CodexScanner: @unchecked Sendable {
                 status: status,
                 currentAction: action,
                 detailSummary: "",
-                startedAt: snap?.startedAt,
+                startedAt: snap?.startedAt ?? hook?.turnStartedAt,
                 updatedAt: updatedAt,
-                completedAt: status == .running ? nil : (snap?.completedAt ?? effectiveMtime),
-                durationSec: snap?.durationSec,
+                completedAt: resolvedCompletedAt,
+                durationSec: isActive ? nil : (hookFresher ? (hook?.durationSec ?? snap?.durationSec) : snap?.durationSec),
                 activeSubagents: subCount,
                 isUnread: false
             ))
         }
         lastKnownSessions = sessions
         return sessions
+    }
+
+    private func computeDBFingerprint() -> String {
+        var parts: [String] = []
+        for p in [stateDBPath, stateDBPath + "-wal"] {
+            if let m = FileMeta.read(p) {
+                parts.append("\(m.inode):\(m.size):\(m.mtimeSec).\(m.mtimeNsec)")
+            } else {
+                parts.append("none")
+            }
+        }
+        return parts.joined(separator: "|")
+    }
+
+    private func loadDBThreadsAndEdges() -> ([DBThread], [String: String])? {
+        let fp = computeDBFingerprint()
+        if fp == lastDBFingerprint, let cached = cachedDBPayload {
+            return cached
+        }
+        guard let reader = SQLiteReader(path: stateDBPath) else { return nil }
+
+        let result: ([DBThread], [String: String])? = reader.withReadTransaction {
+            var parentOfChild: [String: String] = [:]
+            _ = reader.query("SELECT parent_thread_id, child_thread_id FROM thread_spawn_edges;") { stmt in
+                let parent = SQLiteReader.string(stmt, 0)
+                let child = SQLiteReader.string(stmt, 1)
+                if !parent.isEmpty && !child.isEmpty { parentOfChild[child] = parent }
+            }
+
+            var threads: [DBThread] = []
+            let sql = """
+            SELECT id, rollout_path, updated_at, cwd, title, first_user_message,
+                   COALESCE(agent_nickname, ''), source
+            FROM threads
+            WHERE archived = 0
+              AND (trim(title) != '' OR trim(first_user_message) != '')
+            ORDER BY updated_at DESC
+            LIMIT 120;
+            """
+            let ok = reader.query(sql) { stmt in
+                let id = SQLiteReader.string(stmt, 0)
+                guard !id.isEmpty else { return }
+                threads.append(DBThread(
+                    id: id,
+                    rolloutPath: SQLiteReader.string(stmt, 1),
+                    updatedAt: Date(timeIntervalSince1970: TimeInterval(SQLiteReader.int64(stmt, 2))),
+                    cwd: SQLiteReader.string(stmt, 3),
+                    title: SQLiteReader.string(stmt, 4),
+                    firstUserMessage: SQLiteReader.string(stmt, 5),
+                    agentNickname: SQLiteReader.string(stmt, 6),
+                    source: SQLiteReader.string(stmt, 7)
+                ))
+            }
+            guard ok else { return nil }
+            return (threads, parentOfChild)
+        }
+
+        guard let result else { return nil }
+        lastDBFingerprint = fp
+        cachedDBPayload = result
+        return result
     }
 
     private func rootParent(of child: String, map: [String: String]) -> String? {
@@ -363,9 +458,9 @@ final class CodexScanner: @unchecked Sendable {
         guard let attrs = try? fm.attributesOfItem(atPath: sessionIndexPath),
               let mtime = attrs[.modificationDate] as? Date else { return }
         if cachedIndexMtime == mtime { return }
+        guard let content = try? String(contentsOfFile: sessionIndexPath, encoding: .utf8) else { return }
         cachedIndexMtime = mtime
 
-        guard let content = try? String(contentsOfFile: sessionIndexPath, encoding: .utf8) else { return }
         var map: [String: String] = [:]
         for line in content.split(separator: "\n") {
             guard let data = line.data(using: .utf8),
@@ -378,15 +473,9 @@ final class CodexScanner: @unchecked Sendable {
         threadNameById = map
     }
 
-    private func parseRolloutTail(path: String, now: Date) -> CodexRolloutState? {
-        guard !path.isEmpty else { return nil }
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: path),
-              let sizeNum = attrs[.size] as? NSNumber,
-              let mtime = attrs[.modificationDate] as? Date else { return nil }
-        let fileSize = sizeNum.uint64Value
-
-        if let cached = rolloutCache[path], cached.fileSize == fileSize, cached.mtime == mtime {
+    private func parseRolloutTail(path: String, meta: FileMeta, now: Date) -> CodexRolloutState? {
+        let mtime = meta.mtime
+        if let cached = rolloutCache[path], cached.meta == meta {
             if cached.state.status == .running && now.timeIntervalSince(mtime) > 600 {
                 let stale = CodexRolloutState(
                     status: .done, currentAction: "已完成",
@@ -394,26 +483,23 @@ final class CodexScanner: @unchecked Sendable {
                     startedAt: cached.state.startedAt, completedAt: mtime,
                     durationSec: cached.state.durationSec, cwd: cached.state.cwd
                 )
-                rolloutCache[path] = CachedRollout(fileSize: fileSize, mtime: mtime, state: stale)
+                rolloutCache[path] = CachedRollout(meta: meta, state: stale)
                 return stale
             }
             return cached.state
         }
 
-        guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
+        guard let fh = FileHandle(forReadingAtPath: path) else {
+            return rolloutCache[path]?.state
+        }
         defer { try? fh.close() }
 
-        let tailBytes: UInt64 = 262_144
-        let offset = fileSize > tailBytes ? (fileSize - tailBytes) : 0
-        do { try fh.seek(toOffset: offset) } catch { return nil }
-        let data = fh.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
-
-        var lines = text.components(separatedBy: .newlines)
-        if offset > 0 && !lines.isEmpty { lines.removeFirst() }
+        guard let lines = FileTailReader.readTailLines(from: fh, fileSize: meta.size, maxBytes: 262_144) else {
+            return rolloutCache[path]?.state
+        }
 
         let state = CodexRolloutParser.parse(lines: lines, mtime: mtime, now: now)
-        rolloutCache[path] = CachedRollout(fileSize: fileSize, mtime: mtime, state: state)
+        rolloutCache[path] = CachedRollout(meta: meta, state: state)
         return state
     }
 }

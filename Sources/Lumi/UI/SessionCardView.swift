@@ -1,11 +1,51 @@
 import SwiftUI
 
+/// Lightweight isolated 1Hz elapsed timer leaf so running clocks never trigger parent view redraws.
+struct LiveElapsedText: View {
+    enum Style {
+        case duration
+        case mmss
+    }
+
+    let since: Date
+    let style: Style
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0)) { context in
+            let elapsed = max(0, context.date.timeIntervalSince(since))
+            Text(style == .mmss ? ProjectNameHelper.formatMMSS(elapsed) : ProjectNameHelper.formatDuration(elapsed))
+        }
+    }
+}
+
+/// Isolated mascot gaze wrapper so cursor motion over the notch only re-evaluates LumiMascotView.
+struct NotchGazeMascot: View {
+    @ObservedObject var lookModel: NotchLookModel
+    let mood: MascotMood
+    let theme: MascotTheme
+    let size: CGFloat
+    let isCompact: Bool
+    let isActiveSurface: Bool
+    var onPoke: (() -> Void)? = nil
+
+    var body: some View {
+        LumiMascotView(
+            mood: mood,
+            theme: theme,
+            size: size,
+            lookOffset: lookModel.offset,
+            isCompact: isCompact,
+            isActiveSurface: isActiveSurface,
+            onPoke: onPoke
+        )
+    }
+}
+
 /// Refined Studio Bento hairline row — native macOS app icon with Apple Knockout
 /// corner status badge (running spinner, Ember unread checkmark, coral error `!`,
 /// or amber needs-input `?`), bilingual monochrome metadata, and duration display.
 struct BentoSessionRow: View {
     let session: AgentSession
-    var nowRef: Date = Date()
     var compact: Bool = false
     var surface: BoardSurfaceTheme = .charcoal
     var l10n: L10n = L10n(isEnglish: false)
@@ -264,8 +304,7 @@ struct BentoSessionRow: View {
                 )
         } else if session.status == .running {
             HStack(spacing: 5) {
-                let elapsed = max(0, nowRef.timeIntervalSince(session.startedAt ?? session.updatedAt))
-                Text(ProjectNameHelper.formatDuration(elapsed))
+                LiveElapsedText(since: session.startedAt ?? session.updatedAt, style: .duration)
                     .font(.system(size: 10.6, weight: .medium, design: .monospaced))
                     .foregroundColor(surface.subtleText)
                 if isHovering {

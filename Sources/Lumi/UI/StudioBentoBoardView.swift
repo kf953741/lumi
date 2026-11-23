@@ -45,14 +45,14 @@ struct StudioBentoBoardView: View {
     @ObservedObject var store: MonitorStore
     let inNotch: Bool
     var surface: BoardSurfaceTheme = .charcoal
-    let lookOffset: CGSize
+    var lookModel: NotchLookModel? = nil
     let onSwitchMode: () -> Void
     let onOpenSettings: () -> Void
     let onHide: (() -> Void)?
     var onDidJump: (() -> Void)? = nil
 
-    @State private var activeTab: BentoListTab = .all
-    @State private var showRecent = false
+    private var activeTab: BentoListTab { store.activeBoardTab }
+    private var showRecent: Bool { store.showRecentSessions }
 
     private var t: L10n { store.l10n }
 
@@ -81,7 +81,7 @@ struct StudioBentoBoardView: View {
                             isSelected: activeTab == .running
                         ) {
                             withAnimation(.easeInOut(duration: 0.16)) {
-                                activeTab = (activeTab == .running) ? .all : .running
+                                store.activeBoardTab = (activeTab == .running) ? .all : .running
                             }
                         }
 
@@ -93,7 +93,7 @@ struct StudioBentoBoardView: View {
                             isSelected: activeTab == .unread
                         ) {
                             withAnimation(.easeInOut(duration: 0.16)) {
-                                activeTab = (activeTab == .unread) ? .all : .unread
+                                store.activeBoardTab = (activeTab == .unread) ? .all : .unread
                             }
                         }
                     }
@@ -181,16 +181,29 @@ struct StudioBentoBoardView: View {
 
             VStack(spacing: 3) {
                 Spacer(minLength: 4)
-                LumiMascotView(
-                    mood: store.mascotMood,
-                    theme: store.mascotTheme,
-                    size: 66,
-                    lookOffset: lookOffset,
-                    isCompact: false,
-                    isActiveSurface: true,
-                    onPoke: { store.pokeMascot() }
-                )
-                .help(t.helpPokeMascot)
+                if let lookModel {
+                    NotchGazeMascot(
+                        lookModel: lookModel,
+                        mood: store.mascotMood,
+                        theme: store.mascotTheme,
+                        size: 66,
+                        isCompact: false,
+                        isActiveSurface: true,
+                        onPoke: { store.pokeMascot() }
+                    )
+                    .help(t.helpPokeMascot)
+                } else {
+                    LumiMascotView(
+                        mood: store.mascotMood,
+                        theme: store.mascotTheme,
+                        size: 66,
+                        lookOffset: .zero,
+                        isCompact: false,
+                        isActiveSurface: true,
+                        onPoke: { store.pokeMascot() }
+                    )
+                    .help(t.helpPokeMascot)
+                }
 
                 Text(t.stageCaption(for: store.mascotMood))
                     .font(.system(size: 10.5, weight: .medium))
@@ -378,7 +391,7 @@ struct StudioBentoBoardView: View {
                 HStack(spacing: 2) {
                     ForEach(BentoListTab.allCases) { tab in
                         Button {
-                            withAnimation(.easeInOut(duration: 0.15)) { activeTab = tab }
+                            withAnimation(.easeInOut(duration: 0.15)) { store.activeBoardTab = tab }
                         } label: {
                             HStack(spacing: 3.5) {
                                 Text(tab.label(t))
@@ -473,7 +486,6 @@ struct StudioBentoBoardView: View {
                         ForEach(needsInput) { s in
                             BentoSessionRow(
                                 session: s,
-                                nowRef: store.lastRefreshAt,
                                 surface: surface,
                                 l10n: t,
                                 onOpen: {
@@ -498,7 +510,6 @@ struct StudioBentoBoardView: View {
                             ForEach(Array(running.enumerated()), id: \.element.id) { idx, s in
                                 BentoSessionRow(
                                     session: s,
-                                    nowRef: store.lastRefreshAt,
                                     surface: surface,
                                     l10n: t,
                                     onOpen: {
@@ -550,7 +561,7 @@ struct StudioBentoBoardView: View {
 
                     if activeTab == .all && !store.recentReadSessions.isEmpty {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.16)) { showRecent.toggle() }
+                            withAnimation(.easeInOut(duration: 0.16)) { store.showRecentSessions.toggle() }
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: showRecent ? "chevron.down" : "chevron.right")

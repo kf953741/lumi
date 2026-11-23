@@ -102,7 +102,7 @@ Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF blo
 ## Installation
 
 ### Requirements
-- **macOS 14.0+ (Sonoma or newer)** on Apple Silicon or Intel
+- **macOS 14.0+ (Sonoma or newer)** on **Apple Silicon (M1 / M2 / M3 / M4)**
 - For building from source: Xcode Command Line Tools (`xcode-select --install`)
 
 ### Option 1: Install via Homebrew Cask (Fastest)
@@ -133,9 +133,9 @@ swift test
 open -a /Applications/Lumi.app
 ```
 
-> **Note:** To package your own distributable `.dmg` with SHA-256 checksum:
+> **Note:** To package your own distributable `.dmg` with SHA-256 checksum (optionally notarized via `LUMI_NOTARY_PROFILE`):
 > ```bash
-> ./scripts/package_dmg.sh 1.3.0
+> ./scripts/package_dmg.sh 1.4.0
 > ```
 
 ---
@@ -151,8 +151,8 @@ open -a /Applications/Lumi.app
 ### 2. Connecting AI Coding Agents
 1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, **T3 Code**, and **Gemini Desktop (`Gemini.app`)** are tracked automatically with zero setup (including smart deduplication when T3 Code runs Codex, Claude, or Antigravity underneath).
 2. Open **Settings (⚙️) → AI Agents** to enable 1-click Hooks:
-   - Installs a fast, atomic Python relay to `~/.lumi/lumi-hook.py` (< 10 ms, never blocks your agent).
-   - Automatically backs up existing hook files (`*.bak-<timestamp>`) before writing and removes only Lumi's entry on uninstall.
+   - Uses Lumi's built-in native `Lumi --hook` relay (< 5 ms, zero Python / Xcode Command Line Tools dependency, never blocks your agent).
+   - Automatically verifies existing JSON and creates a timestamped backup (`*.bak-<timestamp>`) before writing; refuses to overwrite malformed/JSONC files and removes only Lumi's entry on uninstall.
 
 ### 3. Enabling Click-to-Jump
 - **Codex** (`codex://threads/<id>`) and **T3 Code** (`t3code://threads/<environmentId>/<threadId>`) support native deep links out of the box — clicking any card or macOS notification jumps straight to the exact thread with zero permissions needed.

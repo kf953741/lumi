@@ -49,14 +49,15 @@ if [ -z "$SIGN_ID" ]; then
 fi
 if [ -n "$SIGN_ID" ]; then
     echo "    Using signing identity: $SIGN_ID"
-    codesign --force --deep --options runtime --sign "$SIGN_ID" "$APP_BUNDLE"
+    codesign --force --deep --timestamp --options runtime --sign "$SIGN_ID" "$APP_BUNDLE"
 else
     echo "    Using ad-hoc signature (-)"
     codesign --force --deep --sign - "$APP_BUNDLE"
 fi
 
-echo "==> Installing hook script to ~/.lumi/lumi-hook.py..."
+echo "==> Preparing ~/.lumi hook directory & legacy script..."
 mkdir -p "$HOME/.lumi/live"
+chmod 700 "$HOME/.lumi" "$HOME/.lumi/live"
 cp "$ROOT/Resources/Hooks/lumi-hook.py" "$HOME/.lumi/lumi-hook.py"
 chmod +x "$HOME/.lumi/lumi-hook.py"
 

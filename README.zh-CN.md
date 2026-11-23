@@ -102,7 +102,7 @@
 ## 安装与快速上手
 
 ### 环境要求
-- **macOS 14.0（Sonoma）或更新版本**（Apple Silicon / Intel 均可）
+- **macOS 14.0（Sonoma）或更新版本**（仅支持 **Apple Silicon：M1 / M2 / M3 / M4**）
 - 源码构建需要 Xcode 命令行工具（`xcode-select --install`）
 
 ### 方式一：Homebrew 一键安装（最快）
@@ -133,9 +133,9 @@ swift test
 open -a /Applications/Lumi.app
 ```
 
-> **自行打包发布 `.dmg`（含 SHA-256 校验值）：**
+> **自行打包发布 `.dmg`（含 SHA-256 校验值，支持 `LUMI_NOTARY_PROFILE` 自动 Apple 公证）：**
 > ```bash
-> ./scripts/package_dmg.sh 1.3.0
+> ./scripts/package_dmg.sh 1.4.0
 > ```
 
 ---
@@ -151,8 +151,8 @@ open -a /Applications/Lumi.app
 ### 2. 接入你的 AI 编程工具
 1. 启动 Lumi 后，**Antigravity**、**Codex（含桌面版）**、**Claude Code**、**T3 Code** 与 **桌面版 Gemini（`Gemini.app`）** 会自动开始追踪，无需手动配置（且会自动去重 T3 Code 内部托管运行的 Codex / Claude / Antigravity 会话，避免重复弹窗）。
 2. 点击齿轮打开 **设置 → AI 工具接入**，可按需一键安装各工具的 Hook：
-   - 会在 `~/.lumi/lumi-hook.py` 部署极轻量的原子写入中继脚本（耗时 < 10ms，绝不阻塞宿主 Agent）。
-   - 修改任意配置文件前都会自动生成 `*.bak-<时间戳>` 备份；卸载时仅精准移除 Lumi 条目，完全保留你原有的其他 Hook。
+   - 直接调用 Lumi 内置原生 `Lumi --hook` 中继（耗时 < 5ms，无需 Python 或 Xcode 命令行工具，绝不阻塞宿主 Agent）。
+   - 修改前严格校验现有 JSON 并自动生成 `*.bak-<时间戳>` 备份（遇到带注释 JSONC 或损坏文件会拒绝覆盖保护原配置）；卸载时仅精准移除 Lumi 条目。
 
 ### 3. 点击精准直达对应对话
 - **Codex**（`codex://threads/<id>`）与 **T3 Code**（`t3code://threads/<environmentId>/<threadId>`）均原生支持深链，点击卡片或系统通知即可秒切到具体对话，无需任何系统权限。

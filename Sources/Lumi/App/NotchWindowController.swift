@@ -49,13 +49,20 @@ final class NotchOverlayPanel: NSPanel {
     }
 }
 
+/// Isolated cursor gaze model so mouse movement over the notch only redraws LumiMascotView
+/// instead of re-evaluating the entire NotchIslandView & StudioBentoBoardView tree.
+@MainActor
+final class NotchLookModel: ObservableObject {
+    @Published var offset: CGSize = .zero
+}
+
 @MainActor
 final class NotchWindowController: ObservableObject {
     @Published var isExpanded: Bool = false
-    @Published var lookOffset: CGSize = .zero
     @Published var hasHardwareNotch: Bool = false
     @Published var notchWidth: CGFloat = 185
     @Published var notchHeight: CGFloat = 32
+    let lookModel = NotchLookModel()
 
     private var panel: NotchOverlayPanel!
     private var containerView: NotchTrackingHostView!
@@ -98,13 +105,19 @@ final class NotchWindowController: ObservableObject {
         hostingView = nil
     }
 
-    func toggleExpanded() {
+    func toggleExpanded(activateForKeyboard: Bool = false) {
         if isExpanded {
             isPinnedOpen = false
+            panel.resignKey()
             setExpanded(false)
         } else {
             isPinnedOpen = true
             setExpanded(true)
+            if activateForKeyboard {
+                // Allow immediate Escape key dismissal when explicitly opened via global hotkey
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+            }
         }
     }
 
@@ -132,8 +145,8 @@ final class NotchWindowController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.6, execute: work)
     }
 
-    /// Detects if the frontmost non-Lumi app owns a fullscreen window on the target screen
-    /// (covers macOS Spaces fullscreen, YouTube/Bilibili video fullscreen, and Keynote presentations).
+    /// Detects if the frontmost non-Lumi app owns a fullscreen window ON THE TARGET SCREEN
+    /// (properly handles multi-monitor setups by intersecting CoreGraphics window bounds with the target screen).
     private func isActiveAppInFullscreen() -> Bool {
         guard let screen = targetScreen(),
               let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
@@ -143,19 +156,32 @@ final class NotchWindowController: ObservableObject {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
             return false
         }
-        let sW = screen.frame.width
-        let sH = screen.frame.height
+        // Convert AppKit bottom-left screen coordinates to CoreGraphics top-left coordinates
+        let primaryMaxY = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
+        let cgScreenRect = CGRect(
+            x: screen.frame.minX,
+            y: primaryMaxY - screen.frame.maxY,
+            width: screen.frame.width,
+            height: screen.frame.height
+        )
+        let screenArea = max(1, cgScreenRect.width * cgScreenRect.height)
+
         for info in list {
             guard let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
                   ownerPID == frontPID,
                   let layer = info[kCGWindowLayer as String] as? Int,
                   layer == 0,
                   let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+                  let x = boundsDict["X"] as? CGFloat,
+                  let y = boundsDict["Y"] as? CGFloat,
                   let w = boundsDict["Width"] as? CGFloat,
                   let h = boundsDict["Height"] as? CGFloat else {
                 continue
             }
-            if w >= sW - 6 && h >= sH - 6 {
+            guard w >= cgScreenRect.width - 6 && h >= cgScreenRect.height - 6 else { continue }
+            let winRect = CGRect(x: x, y: y, width: w, height: h)
+            let overlap = winRect.intersection(cgScreenRect)
+            if !overlap.isNull && (overlap.width * overlap.height) >= screenArea * 0.5 {
                 return true
             }
         }
@@ -261,8 +287,8 @@ final class NotchWindowController: ObservableObject {
 
     private func handleMouseExited() {
         isMouseInside = false
-        if lookOffset != .zero {
-            lookOffset = .zero
+        if lookModel.offset != .zero {
+            lookModel.offset = .zero
         }
         hoverOpenWork?.cancel()
         guard isExpanded else { return }
@@ -283,18 +309,46 @@ final class NotchWindowController: ObservableObject {
         let dx = max(-1, min(1, (pt.x - anchorX) / 140.0))
         let dy = max(-1, min(1, (anchorY - pt.y) / 120.0))
         let next = CGSize(width: dx, height: dy)
-        if abs(next.width - lookOffset.width) > 0.06 || abs(next.height - lookOffset.height) > 0.06 {
-            lookOffset = next
+        if abs(next.width - lookModel.offset.width) > 0.06 || abs(next.height - lookModel.offset.height) > 0.06 {
+            lookModel.offset = next
         }
     }
 
     // MARK: - Screen & Notch Geometry
 
+    static func screenKey(for screen: NSScreen) -> String {
+        if let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+            return "display:\(num.uint32Value)"
+        }
+        return screen.localizedName
+    }
+
+    static func screenChoices() -> [(id: String, label: String)] {
+        let screens = NSScreen.screens
+        var nameCounts: [String: Int] = [:]
+        for s in screens { nameCounts[s.localizedName, default: 0] += 1 }
+        var seen: [String: Int] = [:]
+        return screens.map { s in
+            let id = screenKey(for: s)
+            if (nameCounts[s.localizedName] ?? 0) > 1 {
+                let idx = (seen[s.localizedName] ?? 0) + 1
+                seen[s.localizedName] = idx
+                return (id: id, label: "\(s.localizedName) (\(idx))")
+            }
+            return (id: id, label: s.localizedName)
+        }
+    }
+
     private func targetScreen() -> NSScreen? {
         let screens = NSScreen.screens
-        if store.selectedScreenName != "auto",
-           let match = screens.first(where: { $0.localizedName == store.selectedScreenName }) {
-            return match
+        if store.selectedScreenName != "auto" {
+            if let byId = screens.first(where: { Self.screenKey(for: $0) == store.selectedScreenName }) {
+                return byId
+            }
+            // Backward compatibility for saved localizedName preference
+            if let byName = screens.first(where: { $0.localizedName == store.selectedScreenName }) {
+                return byName
+            }
         }
         // Prefer MacBook built-in notch screen if present
         if let notchScreen = screens.first(where: { $0.auxiliaryTopLeftArea != nil && $0.auxiliaryTopRightArea != nil }) {

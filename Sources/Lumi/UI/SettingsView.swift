@@ -80,8 +80,8 @@ struct SettingsView: View {
                     Toggle(t.lblFullscreenHide, isOn: $store.hideAutoPeekInFullscreen)
                     Picker(t.lblTargetScreen, selection: $store.selectedScreenName) {
                         Text(t.lblAutoScreen).tag("auto")
-                        ForEach(NSScreen.screens, id: \.localizedName) { screen in
-                            Text(screen.localizedName).tag(screen.localizedName)
+                        ForEach(NotchWindowController.screenChoices(), id: \.id) { choice in
+                            Text(choice.label).tag(choice.id)
                         }
                     }
                 } else {
@@ -103,6 +103,12 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+
+                if let hkErr = store.hotKeyErrorMessage {
+                    Text(hkErr)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                }
 
                 Toggle(t.lblHideCLI, isOn: $store.hideCLISessions)
                 Toggle(t.lblLaunchAtLogin, isOn: $store.launchAtLogin)

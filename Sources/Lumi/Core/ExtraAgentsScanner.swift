@@ -8,13 +8,13 @@ final class ExtraAgentsScanner: @unchecked Sendable {
         ("opencode", .opencode)
     ]
 
-    func scan(lookbackHours: Double = 24) -> [AgentSession] {
+    func scan(lookbackHours: Double = 24, preloadedHooksByAgent: [String: [String: LiveHookRecord]]? = nil) -> [AgentSession] {
         let now = Date()
         let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
         var results: [AgentSession] = []
 
         for (agentKey, kind) in supportedAgents {
-            let records = LiveHookRecord.loadAll(forAgent: agentKey)
+            let records = preloadedHooksByAgent?[agentKey] ?? LiveHookRecord.loadAll(forAgent: agentKey)
             for (sid, hook) in records {
                 guard hook.updatedAt >= cutoff else { continue }
                 let path = hook.workspacePaths.first ?? hook.cwd
@@ -36,8 +36,12 @@ final class ExtraAgentsScanner: @unchecked Sendable {
                     status = .error
                 } else if hook.state == "canceled" {
                     status = .canceled
-                } else {
+                } else if hook.state == "done" {
                     status = .done
+                } else {
+                    // Skip idle (e.g. SessionStart before any prompt) or expired/unknown states
+                    // so they never fabricate false `.done` completion alerts.
+                    continue
                 }
 
                 results.append(AgentSession(

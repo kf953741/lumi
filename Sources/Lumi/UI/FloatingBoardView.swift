@@ -7,8 +7,6 @@ struct FloatingBoardView: View {
     var onOpenSettings: () -> Void
     var onHide: () -> Void
 
-    @State private var lookOffset: CGSize = .zero
-
     private var surface: BoardSurfaceTheme {
         store.floatingAppearance == .oatLight ? .oatLight : .charcoal
     }
@@ -41,7 +39,7 @@ struct FloatingBoardView: View {
                 store: store,
                 inNotch: false,
                 surface: surface,
-                lookOffset: lookOffset,
+                lookModel: nil,
                 onSwitchMode: onDockToNotch,
                 onOpenSettings: onOpenSettings,
                 onHide: onHide

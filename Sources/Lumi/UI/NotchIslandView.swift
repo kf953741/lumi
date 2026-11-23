@@ -79,7 +79,7 @@ struct NotchIslandView: View {
     private var hasHardwareNotch: Bool { controller.hasHardwareNotch }
     private var hardwareNotchWidth: CGFloat { controller.notchWidth }
     private var hardwareNotchHeight: CGFloat { controller.notchHeight }
-    private var lookOffset: CGSize { controller.lookOffset }
+    private var lookModel: NotchLookModel { controller.lookModel }
 
     private var earRadius: CGFloat {
         guard hasHardwareNotch else { return 0 }
@@ -142,7 +142,7 @@ struct NotchIslandView: View {
                                 store: store,
                                 inNotch: true,
                                 surface: surface,
-                                lookOffset: lookOffset,
+                                lookModel: lookModel,
                                 onSwitchMode: onPopOutFloating,
                                 onOpenSettings: onOpenSettings,
                                 onHide: nil,
@@ -215,7 +215,7 @@ struct NotchIslandView: View {
                             store: store,
                             inNotch: true,
                             surface: surface,
-                            lookOffset: lookOffset,
+                            lookModel: lookModel,
                             onSwitchMode: onPopOutFloating,
                             onOpenSettings: onOpenSettings,
                             onHide: nil,
@@ -287,7 +287,7 @@ struct NotchIslandView: View {
                     store: store,
                     inNotch: true,
                     surface: surface,
-                    lookOffset: lookOffset,
+                    lookModel: lookModel,
                     onSwitchMode: onPopOutFloating,
                     onOpenSettings: onOpenSettings,
                     onHide: nil,
@@ -298,11 +298,11 @@ struct NotchIslandView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             } else {
                 HStack(spacing: 7) {
-                    LumiMascotView(
+                    NotchGazeMascot(
+                        lookModel: lookModel,
                         mood: store.mascotMood,
                         theme: store.mascotTheme,
                         size: 24,
-                        lookOffset: lookOffset,
                         isCompact: true,
                         isActiveSurface: false
                     )
@@ -336,11 +336,11 @@ struct NotchIslandView: View {
     private var collapsedLeftEar: some View {
         let activeKinds = store.collapsedActiveKinds
         return HStack(spacing: 4) {
-            LumiMascotView(
+            NotchGazeMascot(
+                lookModel: lookModel,
                 mood: store.mascotMood,
                 theme: store.mascotTheme,
                 size: min(24, max(20, hardwareNotchHeight - 8)),
-                lookOffset: lookOffset,
                 isCompact: true,
                 isActiveSurface: false
             )
@@ -379,11 +379,10 @@ struct NotchIslandView: View {
                 .padding(.vertical, 2.5)
                 .background(Capsule().fill(LumiPalette.needsAmber.opacity(0.18)))
             } else if let solo = store.singleRunningSession {
-                // Single active task -> show live tabular MM:SS elapsed timer directly!
-                let elapsed = max(0, store.lastRefreshAt.timeIntervalSince(solo.startedAt ?? solo.updatedAt))
+                // Single active task -> show isolated 1Hz tabular MM:SS elapsed timer directly!
                 HStack(spacing: 4) {
                     TelemetryPulseBars(active: true, color: LumiPalette.emberGold)
-                    Text(ProjectNameHelper.formatMMSS(elapsed))
+                    LiveElapsedText(since: solo.startedAt ?? solo.updatedAt, style: .mmss)
                         .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .monospacedDigit()
                         .foregroundColor(LumiPalette.warmPrimary.opacity(0.95))

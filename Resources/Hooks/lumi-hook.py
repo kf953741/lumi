@@ -15,6 +15,7 @@ Writes atomic JSON state into ~/.lumi/live/<agent>__<sessionId>.json (<10ms).
 Always outputs valid contract JSON for the host agent and exits 0 without blocking.
 """
 
+import fcntl
 import json
 import os
 import re
@@ -37,22 +38,37 @@ def clean_line(text, limit=160):
     return s
 
 
-def normalize_event(raw):
+def normalize_event(raw, payload=None):
     mapping = {
         "PreInvocation": "UserPromptSubmit",
         "BeforeAgent": "UserPromptSubmit",
+        "beforeSubmitPrompt": "UserPromptSubmit",
         "BeforeTool": "PreToolUse",
         "BeforeToolSelection": "PreToolUse",
+        "beforeShellExecution": "PreToolUse",
+        "beforeMCPExecution": "PreToolUse",
+        "beforeReadFile": "PreToolUse",
         "AfterTool": "PostToolUse",
         "PostInvocation": "PostToolUse",
+        "afterFileEdit": "PostToolUse",
+        "afterShellExecution": "PostToolUse",
         "AfterAgent": "Stop",
         "stop": "Stop",
         "session.idle": "Stop",
         "session.busy": "UserPromptSubmit",
         "PermissionRequest": "NeedsInput",
         "Elicitation": "NeedsInput",
+        "permission.asked": "NeedsInput",
         "Notification": "Notification",
     }
+    if raw == "session.status" and isinstance(payload, dict):
+        st = payload.get("status")
+        st_type = (st.get("type") if isinstance(st, dict) else st) or ""
+        st_low = str(st_type).lower()
+        if st_low in ("busy", "retry", "running"):
+            return "UserPromptSubmit"
+        if st_low == "idle":
+            return "Stop"
     return mapping.get(raw, raw)
 
 
@@ -136,21 +152,31 @@ def main():
             pass
 
     raw_event = str(payload.get("hookEventName") or payload.get("hook_event_name") or event_arg or "")
-    norm_event = normalize_event(raw_event)
+    norm_event = normalize_event(raw_event, payload)
 
     session_id = str(
         payload.get("conversationId")
         or payload.get("session_id")
         or payload.get("conversation_id")
         or payload.get("thread_id")
+        or payload.get("generation_id")
         or ""
     ).strip()
 
     if session_id:
+        lock_file = None
         try:
-            os.makedirs(LIVE_DIR, exist_ok=True)
+            os.makedirs(LIVE_DIR, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(LIVE_DIR, 0o700)
+            except Exception:
+                pass
             safe_id = re.sub(r"[^a-zA-Z0-9._-]", "_", session_id)
             path = os.path.join(LIVE_DIR, f"{agent}__{safe_id}.json")
+            lock_path = os.path.join(LIVE_DIR, f".{agent}__{safe_id}.lock")
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            lock_file = os.fdopen(lock_fd, "r+")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
             prev = {}
             if os.path.exists(path):
@@ -200,6 +226,19 @@ def main():
             else:
                 t_name = payload.get("tool_name") or payload.get("toolName") or ""
                 t_args = payload.get("tool_input") or payload.get("toolInput") or {}
+            if not t_name:
+                if raw_event in ("beforeShellExecution", "afterShellExecution"):
+                    t_name = "shell"
+                    if payload.get("command"):
+                        t_args = {"command": payload.get("command")}
+                elif raw_event == "afterFileEdit":
+                    t_name = "edit_file"
+                    if payload.get("file_path"):
+                        t_args = {"file_path": payload.get("file_path")}
+                elif raw_event == "beforeReadFile":
+                    t_name = "read_file"
+                    if payload.get("file_path"):
+                        t_args = {"file_path": payload.get("file_path")}
             t_label = summarize_tool(t_name, t_args)
 
             if norm_event in ("SessionStart",):
@@ -211,9 +250,16 @@ def main():
                 rec["action"] = "思考规划中…"
                 rec["terminationReason"] = ""
                 rec["error"] = ""
+                rec.pop("completedAt", None)
+                rec.pop("durationSec", None)
+                rec.pop("fullyIdle", None)
             elif norm_event == "PreToolUse":
                 if not rec.get("turnStartedAt"):
                     rec["turnStartedAt"] = now
+                    rec.pop("completedAt", None)
+                    rec.pop("durationSec", None)
+                    rec["terminationReason"] = ""
+                    rec["error"] = ""
                 if str(t_name or "").lower() in ("ask_question", "askuserquestion"):
                     rec["state"] = "needs_input"
                     rec["action"] = "等待你确认/回答"
@@ -252,20 +298,21 @@ def main():
                 rec["completedAt"] = now
                 rec["turnStartedAt"] = 0
             elif norm_event == "Stop":
-                reason = str(payload.get("terminationReason") or "")
+                reason = str(payload.get("terminationReason") or payload.get("status") or "")
+                upper_reason = reason.upper()
                 err = clean_line(payload.get("error") or "", 160)
                 fully_idle = payload.get("fullyIdle", True)
                 rec["terminationReason"] = reason
                 rec["fullyIdle"] = bool(fully_idle)
                 rec["error"] = err
-                if reason == "ERROR" or err:
+                if upper_reason in ("ERROR", "FAILED") or err:
                     rec["completedAt"] = now
                     if rec.get("turnStartedAt"):
                         rec["durationSec"] = max(0.0, now - float(rec["turnStartedAt"]))
                     rec["state"] = "error"
                     rec["action"] = f"执行出错 · {err}" if err else "执行出错"
                     rec["turnStartedAt"] = 0
-                elif reason == "USER_CANCELED":
+                elif upper_reason in ("USER_CANCELED", "ABORTED", "CANCELED", "CANCELLED"):
                     rec["completedAt"] = now
                     rec["state"] = "canceled"
                     rec["action"] = "已手动停止"
@@ -282,11 +329,19 @@ def main():
                     rec["turnStartedAt"] = 0
 
             tmp = f"{path}.tmp.{os.getpid()}"
-            with open(tmp, "w", encoding="utf-8") as f:
+            tmp_fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 json.dump(rec, f, ensure_ascii=False)
             os.replace(tmp, path)
         except Exception:
             pass
+        finally:
+            if lock_file is not None:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    lock_file.close()
+                except Exception:
+                    pass
 
     # Output host-specific valid JSON contract
     if agent == "antigravity":
@@ -299,6 +354,14 @@ def main():
         sys.stdout.flush()
     elif agent == "gemini":
         sys.stdout.write('{}\n')
+        sys.stdout.flush()
+    elif agent == "cursor":
+        if raw_event in ("beforeShellExecution", "beforeMCPExecution", "beforeReadFile"):
+            sys.stdout.write('{"permission":"allow"}\n')
+        elif raw_event == "beforeSubmitPrompt":
+            sys.stdout.write('{"continue":true}\n')
+        else:
+            sys.stdout.write('{}\n')
         sys.stdout.flush()
 
 

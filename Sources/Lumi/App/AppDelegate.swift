@@ -5,6 +5,11 @@ import UserNotifications
 @main
 struct LumiAppLauncher {
     static func main() {
+        // Fast native CLI hook relay mode: runs in <5ms with zero AppKit/Python overhead!
+        if NativeHookRelay.shouldHandle(arguments: CommandLine.arguments) {
+            NativeHookRelay.run(arguments: Array(CommandLine.arguments.dropFirst()))
+            exit(0)
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -14,7 +19,7 @@ struct LumiAppLauncher {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     private var floatingPanel: NSPanel!
     private var settingsWindow: NSWindow?
@@ -54,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             )
         }
         store.onHotKeyPresetChanged = { [weak self] preset in
-            self?.registerGlobalHotKey(preset: preset)
+            self?.registerGlobalHotKey(preset: preset) ?? false
         }
         store.onCountsChanged = { [weak self] running, unread, needsInput, _ in
             self?.updateStatusItem(running: running, unread: unread, needsInput: needsInput)
@@ -65,10 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.notchController.peekBrieflyForCompletion()
         }
 
-        registerGlobalHotKey(preset: store.hotKeyPreset)
+        _ = registerGlobalHotKey(preset: store.hotKeyPreset)
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 { // Escape collapses expanded notch or hides floating board
                 guard let self else { return event }
+                if self.settingsWindow?.isKeyWindow == true {
+                    return event
+                }
                 if self.store.displayMode == .notch && self.notchController.isExpanded {
                     self.notchController.collapseAfterJump()
                     return nil
@@ -87,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.notchController.recomputeScreenGeometry(animated: false)
+                self?.ensureFloatingPanelOnScreen()
             }
         }
 
@@ -119,47 +128,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let sessionId = info["sessionId"] as? String
         let deepLink = info["deepLink"] as? String
         let bundleID = info["bundleID"] as? String
+        let completedAt = info["completedAt"] as? TimeInterval
 
         DispatchQueue.main.async { [weak self] in
             defer { completionHandler() }
+
+            func openBundleFallback() {
+                guard let bundleID,
+                      let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+                let cfg = NSWorkspace.OpenConfiguration()
+                cfg.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: cfg, completionHandler: nil)
+            }
+
             if let self, let sessionId {
-                self.store.markRead(byId: sessionId)
-                if self.store.openSession(byId: sessionId) {
+                self.store.markRead(byId: sessionId, upTo: completedAt)
+                // If session is already loaded in memory, use its live navigation handler first.
+                // Otherwise (cold-start or stale banner), prefer the notification's original deepLink
+                // BEFORE rebuilding a fallback URL from current disk state!
+                if self.store.allSessions.contains(where: { $0.id == sessionId }),
+                   self.store.openSession(byId: sessionId) {
                     return
                 }
             }
             if let deepLink, let url = URL(string: deepLink) {
                 let cfg = NSWorkspace.OpenConfiguration()
                 cfg.activates = true
-                NSWorkspace.shared.open(url, configuration: cfg) { app, _ in
-                    if let app {
-                        DispatchQueue.main.async { app.activate() }
+                NSWorkspace.shared.open(url, configuration: cfg) { [weak self] app, error in
+                    DispatchQueue.main.async {
+                        if error != nil {
+                            if let self, let sessionId, self.store.openSession(byId: sessionId) {
+                                return
+                            }
+                            openBundleFallback()
+                        } else if let app {
+                            app.activate()
+                        }
                     }
                 }
                 return
             }
-            if let bundleID,
-               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                let cfg = NSWorkspace.OpenConfiguration()
-                cfg.activates = true
-                NSWorkspace.shared.openApplication(at: url, configuration: cfg, completionHandler: nil)
+            if let self, let sessionId, self.store.openSession(byId: sessionId) {
+                return
             }
+            openBundleFallback()
         }
     }
 
-    private func registerGlobalHotKey(preset: GlobalHotKeyPreset) {
-        hotKeyManager.register(preset: preset) { [weak self] in
-            self?.togglePrimaryUI()
-        }
-    }
-
-    private func togglePrimaryUI() {
+    private func togglePrimaryUI(fromHotKey: Bool = false) {
         if store.displayMode == .notch {
-            notchController.toggleExpanded()
+            notchController.toggleExpanded(activateForKeyboard: fromHotKey)
         } else if floatingPanel.isVisible {
             hideFloatingPanel()
         } else {
             showFloatingPanel(activate: true)
+        }
+    }
+
+    @discardableResult
+    private func registerGlobalHotKey(preset: GlobalHotKeyPreset) -> Bool {
+        hotKeyManager.register(preset: preset) { [weak self] in
+            self?.togglePrimaryUI(fromHotKey: true)
         }
     }
 
@@ -416,6 +445,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    private func ensureFloatingPanelOnScreen() {
+        guard let panel = floatingPanel else { return }
+        let frame = panel.frame
+        let onAnyScreen = NSScreen.screens.contains { screen in
+            screen.visibleFrame.intersects(frame.insetBy(dx: 40, dy: 40))
+        }
+        guard !onAnyScreen, let screen = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame else { return }
+        let x = max(screen.minX + 16, min(screen.maxX - frame.width - 16, frame.minX))
+        let y = max(screen.minY + 16, min(screen.maxY - frame.height - 16, frame.minY))
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
     private func hideFloatingPanel() {
         floatingPanel.orderOut(nil)
         floatingPanel.contentView = nil
@@ -457,9 +498,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         win.title = store.l10n.settingsWindowTitle
         win.center()
         win.isReleasedWhenClosed = false
+        win.delegate = self
         win.contentView = NSHostingView(rootView: SettingsView(store: store))
         settingsWindow = win
         NSApp.activate(ignoringOtherApps: true)
         win.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closed = notification.object as? NSWindow, closed === settingsWindow else { return }
+        // Release SettingsView's NSHostingView & animated mascot canvas when Settings closes
+        settingsWindow?.contentView = nil
+        settingsWindow = nil
     }
 }

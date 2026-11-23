@@ -243,6 +243,11 @@ public struct L10n: Sendable {
     public var secBehavior: String { isEnglish ? "Language, Hotkey & Startup" : "语言、快捷键与启动" }
     public var lblLanguage: String { isEnglish ? "Interface Language" : "界面语言" }
     public var lblGlobalHotkey: String { isEnglish ? "Global Toggle Hotkey" : "全局唤出/收起快捷键" }
+    public func hotKeyConflictMessage(_ shortcut: String) -> String {
+        isEnglish
+            ? "Could not register \(shortcut) (already used by another app). Kept your previous shortcut."
+            : "快捷键 \(shortcut) 已被其他应用占用，已保留原快捷键。"
+    }
     public var lblHideCLI: String { isEnglish ? "Hide headless CLI batch runs (desktop chats only)" : "隐藏后台 CLI 批处理任务（只看独立桌面对话）" }
     public var lblLaunchAtLogin: String { isEnglish ? "Launch Lumi at macOS login" : "登录 macOS 时自动启动 Lumi" }
 

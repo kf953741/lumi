@@ -7,7 +7,11 @@ import UserNotifications
 @MainActor
 final class MonitorStore: ObservableObject {
     @Published private(set) var allSessions: [AgentSession] = []
-    @Published var selectedFilter: AgentFilter = .all
+    @Published var selectedFilter: AgentFilter = .all {
+        didSet { recomputeDerived() }
+    }
+    @Published var activeBoardTab: BentoListTab = .all
+    @Published var showRecentSessions: Bool = false
 
     @Published var displayMode: DisplayMode {
         didSet {
@@ -34,7 +38,11 @@ final class MonitorStore: ObservableObject {
         didSet { UserDefaults.standard.set(notificationsEnabled, forKey: "notificationsEnabled") }
     }
     @Published var hideCLISessions: Bool {
-        didSet { UserDefaults.standard.set(hideCLISessions, forKey: "hideCLISessions") }
+        didSet {
+            UserDefaults.standard.set(hideCLISessions, forKey: "hideCLISessions")
+            recomputeDerived()
+            notifyCounts()
+        }
     }
     @Published var selectedSound: String {
         didSet { UserDefaults.standard.set(selectedSound, forKey: "selectedSound") }
@@ -45,8 +53,16 @@ final class MonitorStore: ObservableObject {
             onScreenChanged?()
         }
     }
+    private var isRevertingLaunchAtLogin = false
     @Published var launchAtLogin: Bool {
-        didSet { LaunchAgentManager.setEnabled(launchAtLogin) }
+        didSet {
+            guard !isRevertingLaunchAtLogin else { return }
+            if !LaunchAgentManager.setEnabled(launchAtLogin) {
+                isRevertingLaunchAtLogin = true
+                launchAtLogin = oldValue
+                isRevertingLaunchAtLogin = false
+            }
+        }
     }
     @Published var autoJumpAntigravity: Bool {
         didSet { UserDefaults.standard.set(autoJumpAntigravity, forKey: "autoJumpAntigravity") }
@@ -64,12 +80,27 @@ final class MonitorStore: ObservableObject {
     @Published var hideAutoPeekInFullscreen: Bool {
         didSet { UserDefaults.standard.set(hideAutoPeekInFullscreen, forKey: "hideAutoPeekInFullscreen") }
     }
+    private var isRevertingHotKey = false
     @Published var hotKeyPreset: GlobalHotKeyPreset {
         didSet {
-            UserDefaults.standard.set(hotKeyPreset.rawValue, forKey: "hotKeyPreset")
-            onHotKeyPresetChanged?(hotKeyPreset)
+            guard !isRevertingHotKey else { return }
+            if let handler = onHotKeyPresetChanged {
+                if handler(hotKeyPreset) {
+                    hotKeyErrorMessage = nil
+                    UserDefaults.standard.set(hotKeyPreset.rawValue, forKey: "hotKeyPreset")
+                } else {
+                    let failedLabel = hotKeyPreset.label(isEnglish: isEnglish)
+                    hotKeyErrorMessage = l10n.hotKeyConflictMessage(failedLabel)
+                    isRevertingHotKey = true
+                    hotKeyPreset = oldValue
+                    isRevertingHotKey = false
+                }
+            } else {
+                UserDefaults.standard.set(hotKeyPreset.rawValue, forKey: "hotKeyPreset")
+            }
         }
     }
+    @Published var hotKeyErrorMessage: String? = nil
     @Published var dndUntil: Date? {
         didSet {
             if let d = dndUntil {
@@ -77,6 +108,7 @@ final class MonitorStore: ObservableObject {
             } else {
                 UserDefaults.standard.removeObject(forKey: "dndUntil")
             }
+            scheduleDNDTimer()
             notifyCounts()
         }
     }
@@ -107,8 +139,20 @@ final class MonitorStore: ObservableObject {
         dndUntil = nil
     }
 
-    @Published var lastRefreshAt: Date = Date()
     @Published var hookStatus: [AgentKind: Bool] = [:]
+
+    // Precomputed derived collections (recomputed only when allSessions / filter / hideCLISessions change)
+    private(set) var filteredSessions: [AgentSession] = []
+    private(set) var needsInputSessions: [AgentSession] = []
+    private(set) var runningSessions: [AgentSession] = []
+    private(set) var unreadCompletedSessions: [AgentSession] = []
+    private(set) var recentReadSessions: [AgentSession] = []
+    private(set) var totalNeedsInputCount: Int = 0
+    private(set) var totalRunningCount: Int = 0
+    private(set) var totalUnreadCount: Int = 0
+    private(set) var hasUnreadError: Bool = false
+    private(set) var collapsedActiveKinds: [AgentKind] = []
+    private(set) var singleRunningSession: AgentSession? = nil
 
     // Mascot interactive state
     @Published private(set) var celebratingUntil: Date = .distantPast
@@ -122,7 +166,7 @@ final class MonitorStore: ObservableObject {
     var onWindowLevelChanged: ((Bool) -> Void)?
     var onScreenChanged: (() -> Void)?
     var onLanguageChanged: (() -> Void)?
-    var onHotKeyPresetChanged: ((GlobalHotKeyPreset) -> Void)?
+    var onHotKeyPresetChanged: ((GlobalHotKeyPreset) -> Bool)?
     var onCountsChanged: ((Int, Int, Int, MascotMood) -> Void)?
     var onCompletionMoment: (() -> Void)?
 
@@ -135,11 +179,27 @@ final class MonitorStore: ObservableObject {
     private let scanQueue = DispatchQueue(label: "cc.bigsmart.lumi.scan", qos: .utility)
     private let jumpLogger = Logger(subsystem: "cc.bigsmart.Lumi", category: "jump")
     private var timer: Timer?
+    private var dndTimer: Timer?
+    private var moodResetWork: DispatchWorkItem?
     private var activityToken: NSObjectProtocol?
     private var scanInFlight = false
+    private var pendingRefreshRequested = false
     private var lastJumpKey: String = ""
     private var lastJumpAt: Date = .distantPast
     private var jumpHintWork: DispatchWorkItem?
+    private var antigravityJumpToken: UInt64 = 0
+    private var pendingJumpWorkItems: [DispatchWorkItem] = []
+
+    private struct PendingClipboardRestore {
+        let snapshot: [[NSPasteboard.PasteboardType: Data]]
+        let expectedChangeCount: Int
+    }
+    private var pendingClipboardRestore: PendingClipboardRestore?
+
+    private struct PendingFinish {
+        let completedAt: TimeInterval
+        let since: Date
+    }
 
     private let statePath: String
     private var ackedAt: [String: TimeInterval] = [:]
@@ -147,14 +207,18 @@ final class MonitorStore: ObservableObject {
     private var liveStartedAt: [String: Date] = [:]
     /// Debounces transient running -> idle blips (e.g. subagent handoffs / queued follow-ups):
     /// a session must stay continuously finished for 4.5s before popping a completion alert.
-    private var pendingFinishSince: [String: Date] = [:]
+    private var pendingFinishSince: [String: PendingFinish] = [:]
     private var notifiedCompletedAt: [String: TimeInterval] = [:]
     private var notifiedNeedsInputKey: [String: String] = [:]
+    private var lastAlertSoundAt: Date = .distantPast
+    private var lastPruneAt: Date = Date()
     private let completionDebounceSeconds: TimeInterval = 4.5
     private var didInitialScan = false
     private let launchTime = Date()
+    private let suppressSystemSideEffects: Bool
 
-    init() {
+    init(statePath overrideStatePath: String? = nil, suppressSystemSideEffects: Bool = false) {
+        self.suppressSystemSideEffects = suppressSystemSideEffects
         let d = UserDefaults.standard
         d.register(defaults: [
             "displayMode": DisplayMode.notch.rawValue,
@@ -196,10 +260,57 @@ final class MonitorStore: ObservableObject {
         self.dndUntil = savedDnd > Date().timeIntervalSince1970 ? Date(timeIntervalSince1970: savedDnd) : nil
 
         let dir = "\(NSHomeDirectory())/.lumi"
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        self.statePath = "\(dir)/read_state.json"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        self.statePath = overrideStatePath ?? "\(dir)/read_state.json"
         loadAckState()
         refreshHookStatus()
+        recomputeDerived()
+        scheduleDNDTimer()
+    }
+
+    private func scheduleDNDTimer() {
+        dndTimer?.invalidate()
+        dndTimer = nil
+        guard !suppressSystemSideEffects, let until = dndUntil else { return }
+        let rem = until.timeIntervalSinceNow
+        if rem <= 0 {
+            dndUntil = nil
+            return
+        }
+        // Tick every 30s (or at exact expiry if sooner) so menu bar tooltip countdown stays live even when idle
+        let interval = min(30.0, max(0.5, rem + 0.1))
+        let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let u = self.dndUntil, u <= Date() {
+                    self.dndUntil = nil
+                } else {
+                    self.notifyCounts()
+                    self.scheduleDNDTimer()
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        dndTimer = t
+    }
+
+    private func scheduleMoodReset(until deadline: Date) {
+        moodResetWork?.cancel()
+        let delay = max(0.05, deadline.timeIntervalSinceNow + 0.08)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.objectWillChange.send()
+            self.notifyCounts()
+            // If another transient mood deadline is still active, reschedule for it
+            let nextDeadline = [self.dizzyUntil, self.pokedUntil, self.celebratingUntil]
+                .filter { $0 > Date() }
+                .min()
+            if let nextDeadline {
+                self.scheduleMoodReset(until: nextDeadline)
+            }
+        }
+        moodResetWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func start() {
@@ -222,7 +333,10 @@ final class MonitorStore: ObservableObject {
 
     func refreshNow() {
         refreshAccessibilityStatus()
-        guard !scanInFlight else { return }
+        if scanInFlight {
+            pendingRefreshRequested = true
+            return
+        }
         scanInFlight = true
         let agy = agyScanner
         let codex = codexScanner
@@ -231,16 +345,23 @@ final class MonitorStore: ObservableObject {
         let geminiDesktop = geminiDesktopScanner
         let extra = extraScanner
         scanQueue.async { [weak self] in
-            let t3Result = t3.scanDetailed(lookbackHours: 24)
-            let underlying = agy.scan(lookbackHours: 24)
-                + codex.scan(lookbackHours: 24)
-                + claude.scan(lookbackHours: 24)
-                + extra.scan(lookbackHours: 24)
-            let dedupedUnderlying = underlying.filter { !t3Result.ownsUnderlying($0) }
-            let combined = dedupedUnderlying + t3Result.sessions + geminiDesktop.scan(lookbackHours: 24)
+            let now = Date()
+            let hooksByAgent = LiveHookRecord.loadAllGrouped()
+            let t3Result = t3.scanDetailed(lookbackHours: 24, now: now)
+            let underlying = agy.scan(lookbackHours: 24, preloadedHooks: hooksByAgent["antigravity"] ?? [:])
+                + codex.scan(lookbackHours: 24, now: now, preloadedHooks: hooksByAgent["codex"] ?? [:])
+                + claude.scan(lookbackHours: 24, now: now, preloadedHooks: hooksByAgent["claude"] ?? [:])
+                + extra.scan(lookbackHours: 24, preloadedHooksByAgent: hooksByAgent)
+            let dedupedUnderlying = underlying.filter { !t3Result.ownsUnderlying($0, now: now) }
+            let combined = dedupedUnderlying + t3Result.sessions + geminiDesktop.scan(lookbackHours: 24, now: now)
             Task { @MainActor [weak self] in
-                self?.scanInFlight = false
-                self?.applyScanned(combined)
+                guard let self else { return }
+                self.scanInFlight = false
+                self.applyScanned(combined, now: now)
+                if self.pendingRefreshRequested {
+                    self.pendingRefreshRequested = false
+                    self.refreshNow()
+                }
             }
         }
     }
@@ -269,78 +390,53 @@ final class MonitorStore: ObservableObject {
 
     // MARK: - Derived Collections & Mood
 
-    var filteredSessions: [AgentSession] {
-        allSessions.filter { s in
-            if hideCLISessions && s.isCLI { return false }
-            return selectedFilter.matches(s.kind)
-        }
-    }
+    private func recomputeDerived() {
+        let visibleAll = allSessions.filter { !(hideCLISessions && $0.isCLI) }
+        let filtered = visibleAll.filter { selectedFilter.matches($0.kind) }
 
-    var needsInputSessions: [AgentSession] {
-        filteredSessions
+        filteredSessions = filtered
+        needsInputSessions = filtered
             .filter { $0.status == .needsInput }
             .sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    var runningSessions: [AgentSession] {
-        filteredSessions
+        runningSessions = filtered
             .filter { $0.status == .running }
             .sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    var unreadCompletedSessions: [AgentSession] {
-        filteredSessions
+        unreadCompletedSessions = filtered
             .filter { !$0.isCLI && ($0.status == .done || $0.status == .error) && $0.isUnread }
             .sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
-    }
+        recentReadSessions = Array(
+            filtered
+                .filter { !$0.isCLI && $0.status != .running && $0.status != .needsInput && !$0.isUnread }
+                .sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
+                .prefix(12)
+        )
 
-    var recentReadSessions: [AgentSession] {
-        filteredSessions
-            .filter { !$0.isCLI && $0.status != .running && $0.status != .needsInput && !$0.isUnread }
-            .sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
-            .prefix(12)
-            .map { $0 }
-    }
+        let allNeedsInput = visibleAll.filter { $0.status == .needsInput }
+        let allRunning = visibleAll.filter { $0.status == .running }
+        let allUnread = allSessions.filter { !$0.isCLI && ($0.status == .done || $0.status == .error) && $0.isUnread }
 
-    var totalNeedsInputCount: Int {
-        allSessions.filter { !(hideCLISessions && $0.isCLI) && $0.status == .needsInput }.count
-    }
+        totalNeedsInputCount = allNeedsInput.count
+        totalRunningCount = allRunning.count
+        totalUnreadCount = allUnread.count
+        hasUnreadError = allUnread.contains { $0.status == .error }
 
-    var totalRunningCount: Int {
-        allSessions.filter { !(hideCLISessions && $0.isCLI) && $0.status == .running }.count
-    }
-
-    var totalUnreadCount: Int {
-        allSessions.filter { !$0.isCLI && ($0.status == .done || $0.status == .error) && $0.isUnread }.count
-    }
-
-    var hasUnreadError: Bool {
-        allSessions.contains { !$0.isCLI && $0.status == .error && $0.isUnread }
-    }
-
-    /// Up to 2 distinct active/pending AI app kinds shown as stacked mini native icons
-    /// beside Lumi Ember in the collapsed Dynamic Notch left ear (Scheme 1).
-    var collapsedActiveKinds: [AgentKind] {
         var ordered: [AgentKind] = []
-        let candidates = allSessions.filter { !(hideCLISessions && $0.isCLI) }
-        for s in candidates.filter({ $0.status == .needsInput }).sorted(by: { $0.updatedAt > $1.updatedAt }) {
+        for s in allNeedsInput.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             if !ordered.contains(s.kind) { ordered.append(s.kind) }
         }
-        for s in candidates.filter({ $0.status == .running }).sorted(by: { $0.updatedAt > $1.updatedAt }) {
+        for s in allRunning.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             if !ordered.contains(s.kind) { ordered.append(s.kind) }
         }
-        for s in candidates.filter({ !$0.isCLI && ($0.status == .done || $0.status == .error) && $0.isUnread })
-            .sorted(by: { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }) {
+        for s in allUnread.sorted(by: { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }) {
             if !ordered.contains(s.kind) { ordered.append(s.kind) }
         }
-        return Array(ordered.prefix(2))
-    }
+        collapsedActiveKinds = Array(ordered.prefix(2))
 
-    /// When exactly 1 task is running (and nothing else is blocked or unread),
-    /// the collapsed Notch right ear displays its live MM:SS elapsed timer directly.
-    var singleRunningSession: AgentSession? {
-        guard totalNeedsInputCount == 0, totalRunningCount == 1, totalUnreadCount == 0 else { return nil }
-        return allSessions.first { !(hideCLISessions && $0.isCLI) && $0.status == .running }
+        if totalNeedsInputCount == 0 && totalRunningCount == 1 && totalUnreadCount == 0 {
+            singleRunningSession = allRunning.first
+        } else {
+            singleRunningSession = nil
+        }
     }
 
     var collapsedLeftEarWidth: CGFloat {
@@ -386,53 +482,65 @@ final class MonitorStore: ObservableObject {
         recentPokeTimestamps = recentPokeTimestamps.filter { now.timeIntervalSince($0) < 2.2 }
         recentPokeTimestamps.append(now)
 
+        let deadline: Date
         if recentPokeTimestamps.count >= 4 {
-            dizzyUntil = now.addingTimeInterval(2.8)
+            deadline = now.addingTimeInterval(2.8)
+            dizzyUntil = deadline
             pokedUntil = .distantPast
             recentPokeTimestamps.removeAll()
             if soundEnabled { NSSound(named: NSSound.Name("Pop"))?.play() }
         } else {
-            pokedUntil = now.addingTimeInterval(1.6)
+            deadline = now.addingTimeInterval(1.6)
+            pokedUntil = deadline
             if soundEnabled { NSSound(named: NSSound.Name("Tink"))?.play() }
         }
         notifyCounts()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.9) { [weak self] in
-            self?.objectWillChange.send()
-            self?.notifyCounts()
-        }
+        scheduleMoodReset(until: deadline)
     }
 
     func markRead(_ session: AgentSession) {
-        let ts = max((session.completedAt ?? session.updatedAt).timeIntervalSince1970, Date().timeIntervalSince1970)
-        ackedAt[session.id] = ts
+        let compTs = (session.completedAt ?? session.updatedAt).timeIntervalSince1970
+        ackedAt[session.id] = max(ackedAt[session.id] ?? 0, compTs)
         saveAckState()
         if let idx = allSessions.firstIndex(where: { $0.id == session.id }) {
-            allSessions[idx].isUnread = false
+            let liveComp = (allSessions[idx].completedAt ?? allSessions[idx].updatedAt).timeIntervalSince1970
+            if liveComp <= (ackedAt[session.id] ?? 0) + 0.001 {
+                allSessions[idx].isUnread = false
+            }
         }
+        recomputeDerived()
         notifyCounts()
     }
 
-    func markRead(byId id: String) {
-        let nowTs = Date().timeIntervalSince1970
-        if let idx = allSessions.firstIndex(where: { $0.id == id }) {
+    func markRead(byId id: String, upTo timestamp: TimeInterval? = nil) {
+        if let timestamp {
+            ackedAt[id] = max(ackedAt[id] ?? 0, timestamp)
+            if let idx = allSessions.firstIndex(where: { $0.id == id }) {
+                let liveComp = (allSessions[idx].completedAt ?? allSessions[idx].updatedAt).timeIntervalSince1970
+                if liveComp <= (ackedAt[id] ?? 0) + 0.001 {
+                    allSessions[idx].isUnread = false
+                }
+            }
+        } else if let idx = allSessions.firstIndex(where: { $0.id == id }) {
             let comp = (allSessions[idx].completedAt ?? allSessions[idx].updatedAt).timeIntervalSince1970
-            ackedAt[id] = max(comp, nowTs)
+            ackedAt[id] = max(ackedAt[id] ?? 0, comp)
             allSessions[idx].isUnread = false
         } else {
-            ackedAt[id] = nowTs
+            ackedAt[id] = max(ackedAt[id] ?? 0, Date().timeIntervalSince1970)
         }
         saveAckState()
+        recomputeDerived()
         notifyCounts()
     }
 
     func markAllRead() {
-        let nowTs = Date().timeIntervalSince1970
         for i in allSessions.indices where allSessions[i].isUnread {
             let comp = (allSessions[i].completedAt ?? allSessions[i].updatedAt).timeIntervalSince1970
-            ackedAt[allSessions[i].id] = max(comp, nowTs)
+            ackedAt[allSessions[i].id] = max(ackedAt[allSessions[i].id] ?? 0, comp)
             allSessions[i].isUnread = false
         }
         saveAckState()
+        recomputeDerived()
         notifyCounts()
     }
 
@@ -457,15 +565,14 @@ final class MonitorStore: ObservableObject {
     @discardableResult
     func openSession(byId id: String) -> Bool {
         if let session = allSessions.first(where: { $0.id == id }) {
-            _ = openSession(session)
-            return true
+            return openSession(session)
         }
         if id.hasPrefix("t3code:") {
             let rawId = String(id.dropFirst("t3code:".count))
             if let url = t3Scanner.deepLinkURL(forThreadId: rawId) {
                 dismissJumpHint()
                 NSApp.keyWindow?.resignKey()
-                jumpLogger.info("Jumping to T3 Code thread (byId fallback) via deep link \(url.absoluteString, privacy: .public)")
+                jumpLogger.info("Jumping to T3 Code thread (byId fallback) via deep link \(url.absoluteString, privacy: .private)")
                 openDeepLink(url, bundleIDs: AgentKind.t3code.targetBundleIDs)
                 return true
             }
@@ -509,21 +616,23 @@ final class MonitorStore: ObservableObject {
     func openSession(_ session: AgentSession) -> Bool {
         let now = Date()
         if lastJumpKey == session.id && now.timeIntervalSince(lastJumpAt) < 0.9 {
-            jumpLogger.info("Debounced duplicate jump click for \(session.id, privacy: .public)")
+            jumpLogger.info("Debounced duplicate jump click for \(session.id, privacy: .private)")
             return true
         }
-        lastJumpKey = session.id
-        lastJumpAt = now
+
+        // Cancel any previously in-flight Antigravity Cmd+K sequence whenever a new jump starts
+        cancelPendingAntigravityJump()
 
         switch session.kind {
         case .codex:
+            lastJumpKey = session.id
+            lastJumpAt = now
             dismissJumpHint()
             NSApp.keyWindow?.resignKey()
-            jumpLogger.info("Jumping to Codex thread \(session.rawId, privacy: .public)")
+            jumpLogger.info("Jumping to Codex thread \(session.rawId, privacy: .private)")
             if !session.rawId.isEmpty,
                let url = URL(string: "codex://threads/\(session.rawId)") {
-                NSWorkspace.shared.open(url)
-                activateApp(bundleIDs: session.kind.targetBundleIDs)
+                openDeepLink(url, bundleIDs: session.kind.targetBundleIDs)
                 return true
             }
             openApp(for: .codex)
@@ -534,61 +643,80 @@ final class MonitorStore: ObservableObject {
             let trusted = accessibilityGranted
             let queryTitle = Self.cleanSearchQuery(from: session.title)
             let alreadyFront = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.google.antigravity"
-            jumpLogger.info("Jumping to Antigravity id=\(session.rawId, privacy: .public) trusted=\(trusted) autoJump=\(self.autoJumpAntigravity) alreadyFront=\(alreadyFront) query=\(queryTitle, privacy: .public)")
+            jumpLogger.info("Jumping to Antigravity id=\(session.rawId, privacy: .private) trusted=\(trusted) autoJump=\(self.autoJumpAntigravity) alreadyFront=\(alreadyFront) query=\(queryTitle, privacy: .private)")
 
             if autoJumpAntigravity && !trusted {
                 showJumpHint(l10n.accessibilityStaleHintBanner)
                 if !alreadyFront {
+                    lastJumpKey = session.id
+                    lastJumpAt = now
                     activateApp(bundleIDs: session.kind.targetBundleIDs)
+                    return true
                 }
-                return !alreadyFront
+                // Blocked by missing Accessibility permission while Antigravity is already front:
+                // Do NOT record debounce timestamp so subsequent clicks don't bypass the block and clear unread!
+                return false
             }
 
+            lastJumpKey = session.id
+            lastJumpAt = now
             dismissJumpHint()
             NSApp.keyWindow?.resignKey()
             let shouldAutoLocate = autoJumpAntigravity && trusted && !queryTitle.isEmpty
+            let token = antigravityJumpToken
             activateApp(bundleIDs: session.kind.targetBundleIDs) { [weak self] in
-                guard let self, shouldAutoLocate else { return }
-                self.waitForFrontmostAndLocate(bundleID: "com.google.antigravity", titleQuery: queryTitle, project: session.project, attempt: 0)
+                guard let self, shouldAutoLocate, self.antigravityJumpToken == token else { return }
+                self.waitForFrontmostAndLocate(bundleID: "com.google.antigravity", titleQuery: queryTitle, project: session.project, token: token, attempt: 0)
             }
             return true
 
         case .t3code:
+            lastJumpKey = session.id
+            lastJumpAt = now
             dismissJumpHint()
             NSApp.keyWindow?.resignKey()
             if let url = t3Scanner.deepLinkURL(forThreadId: session.rawId) {
-                jumpLogger.info("Jumping to T3 Code thread via deep link \(url.absoluteString, privacy: .public)")
+                jumpLogger.info("Jumping to T3 Code thread via deep link \(url.absoluteString, privacy: .private)")
                 openDeepLink(url, bundleIDs: session.kind.targetBundleIDs)
                 return true
             }
-            jumpLogger.info("Jumping to T3 Code app without deep link rawId=\(session.rawId, privacy: .public)")
+            jumpLogger.info("Jumping to T3 Code app without deep link rawId=\(session.rawId, privacy: .private)")
             let queryTitle = Self.cleanSearchQuery(from: session.title)
-            activateApp(bundleIDs: session.kind.targetBundleIDs) {
+            let targetBids = session.kind.targetBundleIDs
+            activateApp(bundleIDs: targetBids) {
                 guard !queryTitle.isEmpty else { return }
-                for bid in session.kind.targetBundleIDs {
-                    if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first,
-                       Self.tryRaiseMatchingAXWindow(pid: app.processIdentifier, query: queryTitle) {
-                        return
+                let pids = targetBids.compactMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0).first?.processIdentifier }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    for pid in pids {
+                        if Self.tryRaiseMatchingAXWindow(pid: pid, query: queryTitle) {
+                            return
+                        }
                     }
                 }
             }
             return true
 
         case .gemini:
+            lastJumpKey = session.id
+            lastJumpAt = now
             dismissJumpHint()
             NSApp.keyWindow?.resignKey()
             if session.id.hasPrefix("gemini:desktop:") {
                 let targetTitle = session.title
                 let deepLink = geminiDesktopScanner.deepLinkURL(forSessionId: session.id)
-                jumpLogger.info("Jumping to Gemini Desktop chat=\(targetTitle, privacy: .public) deepLink=\(deepLink?.absoluteString ?? "nil", privacy: .public)")
+                jumpLogger.info("Jumping to Gemini Desktop chat=\(targetTitle, privacy: .private) deepLink=\(deepLink?.absoluteString ?? "nil", privacy: .private)")
                 activateApp(bundleIDs: [GeminiDesktopScanner.bundleID]) { [weak self] in
-                    if let app = NSRunningApplication.runningApplications(withBundleIdentifier: GeminiDesktopScanner.bundleID).first,
-                       AXIsProcessTrusted(),
-                       GeminiDesktopScanner.tryRaiseOrSelectConversation(pid: app.processIdentifier, title: targetTitle) {
-                        return
-                    }
-                    if let deepLink {
-                        self?.openDeepLink(deepLink, bundleIDs: [GeminiDesktopScanner.bundleID])
+                    let pid = NSRunningApplication.runningApplications(withBundleIdentifier: GeminiDesktopScanner.bundleID).first?.processIdentifier
+                    let trusted = AXIsProcessTrusted()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let raised = (pid != nil && trusted)
+                            ? GeminiDesktopScanner.tryRaiseOrSelectConversation(pid: pid!, title: targetTitle)
+                            : false
+                        if !raised, let deepLink {
+                            Task { @MainActor [weak self] in
+                                self?.openDeepLink(deepLink, bundleIDs: [GeminiDesktopScanner.bundleID])
+                            }
+                        }
                     }
                 }
             } else {
@@ -597,6 +725,8 @@ final class MonitorStore: ObservableObject {
             return true
 
         default:
+            lastJumpKey = session.id
+            lastJumpAt = now
             dismissJumpHint()
             NSApp.keyWindow?.resignKey()
             openApp(for: session.kind)
@@ -613,7 +743,7 @@ final class MonitorStore: ObservableObject {
         cfg.activates = true
         NSWorkspace.shared.open(url, configuration: cfg) { [weak self] app, error in
             if let error {
-                self?.jumpLogger.error("Deep link open failed for \(url.absoluteString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                self?.jumpLogger.error("Deep link open failed for \(url.absoluteString, privacy: .private): \(error.localizedDescription, privacy: .public)")
                 DispatchQueue.main.async {
                     self?.activateApp(bundleIDs: bundleIDs)
                 }
@@ -646,67 +776,178 @@ final class MonitorStore: ObservableObject {
         onActivated?()
     }
 
-    private func waitForFrontmostAndLocate(bundleID: String, titleQuery: String, project: String, attempt: Int) {
+    private func restorePendingClipboardIfUnchanged() {
+        guard let pending = pendingClipboardRestore else { return }
+        pendingClipboardRestore = nil
+        let pb = NSPasteboard.general
+        if pb.changeCount == pending.expectedChangeCount {
+            Self.restorePasteboard(pending.snapshot, to: pb)
+        }
+    }
+
+    private func cancelPendingAntigravityJump() {
+        antigravityJumpToken &+= 1
+        for work in pendingJumpWorkItems {
+            work.cancel()
+        }
+        pendingJumpWorkItems.removeAll()
+        restorePendingClipboardIfUnchanged()
+    }
+
+    private func scheduleJumpStep(after delay: TimeInterval, token: UInt64, block: @escaping () -> Void) {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.antigravityJumpToken == token else { return }
+            block()
+        }
+        pendingJumpWorkItems.append(work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func waitForFrontmostAndLocate(bundleID: String, titleQuery: String, project: String, token: UInt64, attempt: Int) {
+        guard antigravityJumpToken == token else { return }
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        if front == bundleID || attempt >= 12 {
-            jumpLogger.info("Antigravity focus ready (front=\(front ?? "nil", privacy: .public), attempt=\(attempt)); running Cmd+K locate")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
-                self?.locateAntigravityConversation(titleQuery: titleQuery, project: project)
+        if front == bundleID {
+            jumpLogger.info("Antigravity focus ready (attempt=\(attempt)); running Cmd+K locate")
+            scheduleJumpStep(after: 0.10, token: token) { [weak self] in
+                self?.locateAntigravityConversation(titleQuery: titleQuery, project: project, token: token)
             }
+            return
+        }
+        // CRITICAL: Never send synthetic keystrokes if Antigravity failed to become frontmost!
+        if attempt >= 12 {
+            jumpLogger.warning("Aborted Antigravity Cmd+K locate: frontmost app is \(front ?? "nil", privacy: .public), not Antigravity")
             return
         }
         if attempt == 4, let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
             running.activate()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.waitForFrontmostAndLocate(bundleID: bundleID, titleQuery: titleQuery, project: project, attempt: attempt + 1)
+        scheduleJumpStep(after: 0.05, token: token) { [weak self] in
+            self?.waitForFrontmostAndLocate(bundleID: bundleID, titleQuery: titleQuery, project: project, token: token, attempt: attempt + 1)
         }
     }
 
-    /// Locates the exact Antigravity conversation:
+    private static func snapshotPasteboard(_ pb: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        guard let items = pb.pasteboardItems else { return [] }
+        return items.compactMap { item in
+            var dict: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    dict[type] = data
+                }
+            }
+            return dict.isEmpty ? nil : dict
+        }
+    }
+
+    private static func restorePasteboard(_ snapshot: [[NSPasteboard.PasteboardType: Data]], to pb: NSPasteboard) {
+        pb.clearContents()
+        guard !snapshot.isEmpty else { return }
+        let items: [NSPasteboardItem] = snapshot.map { dict in
+            let item = NSPasteboardItem()
+            for (type, data) in dict {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        pb.writeObjects(items)
+    }
+
+    /// Locates the exact Antigravity conversation safely:
     /// 1) Raises an existing Antigravity window if its title matches directly.
-    /// 2) Otherwise uses Antigravity's official `Cmd + K` Conversations Palette with the exact title
-    ///    (clearing any stale query with `Cmd + A`, pasting via `Cmd + V`, waiting for FTS5 search results,
-    ///    pressing `Return`, and cleanly restoring the user's clipboard).
-    private func locateAntigravityConversation(titleQuery: String, project: String) {
-        // 1. Check if a separate Antigravity window already has this exact conversation open
-        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.antigravity").first {
-            if Self.tryRaiseMatchingAXWindow(pid: app.processIdentifier, query: titleQuery) {
-                jumpLogger.info("Raised matching Antigravity AX window directly")
+    /// 2) Otherwise uses Antigravity's official `Cmd + K` Conversations Palette with strict frontmost
+    ///    app verification before EVERY synthetic keystroke and full multi-type clipboard preservation.
+    private func locateAntigravityConversation(titleQuery: String, project: String, token: UInt64) {
+        let targetBundle = "com.google.antigravity"
+        func isTargetFrontmost() -> Bool {
+            antigravityJumpToken == token && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == targetBundle
+        }
+        guard isTargetFrontmost() else { return }
+
+        // 1. Check off-main-thread if a separate Antigravity window already shows this exact conversation
+        let agyPID = NSRunningApplication.runningApplications(withBundleIdentifier: targetBundle).first?.processIdentifier
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if let pid = agyPID, Self.tryRaiseMatchingAXWindow(pid: pid, query: titleQuery) {
+                Task { @MainActor [weak self] in
+                    self?.jumpLogger.info("Raised matching Antigravity AX window directly")
+                }
                 return
             }
+            Task { @MainActor [weak self] in
+                self?.runAntigravityPaletteSequence(titleQuery: titleQuery, token: token, pid: agyPID)
+            }
+        }
+    }
+
+    private func runAntigravityPaletteSequence(titleQuery: String, token: UInt64, pid: pid_t?) {
+        let targetBundle = "com.google.antigravity"
+        func isTargetFrontmost() -> Bool {
+            antigravityJumpToken == token && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == targetBundle
+        }
+        /// Positively verifies that Antigravity's single-line search palette input (`AXTextField`,
+        /// `AXSearchField`, or `AXComboBox`) has focus before sending destructive/submit keys.
+        func hasVerifiedSearchFieldFocus() -> Bool {
+            guard let pid else { return false }
+            let appElem = AXUIElementCreateApplication(pid)
+            AXUIElementSetAttributeValue(appElem, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            var focusedRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(appElem, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+                  let focused = focusedRef,
+                  CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+                return false
+            }
+            let focusedEl = focused as! AXUIElement
+            var roleRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(focusedEl, kAXRoleAttribute as CFString, &roleRef) == .success,
+                  let role = roleRef as? String else {
+                return false
+            }
+            return role == "AXTextField" || role == "AXSearchField" || role == "AXComboBox"
         }
 
-        // 2. Use official Cmd+K (Search Conversations) -> Cmd+A -> paste exact title -> wait FTS5 -> Enter -> restore clipboard
-        let pb = NSPasteboard.general
-        let savedString = pb.string(forType: .string)
+        guard isTargetFrontmost() else { return }
 
         // Cmd + K (keyCode 40)
         Self.postKey(40, flags: .maskCommand)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+        scheduleJumpStep(after: 0.30, token: token) { [weak self] in
+            guard let self, isTargetFrontmost() else { return }
+            guard hasVerifiedSearchFieldFocus() else {
+                self.jumpLogger.warning("Aborted Antigravity Cmd+K paste: search palette text field not positively focused")
+                return
+            }
             // Cmd + A (keyCode 0) to clear any previous search text
             Self.postKey(0, flags: .maskCommand)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            self.scheduleJumpStep(after: 0.06, token: token) { [weak self] in
+                guard let self, isTargetFrontmost(), hasVerifiedSearchFieldFocus() else { return }
+                // Snapshot clipboard IMMEDIATELY before overwriting so prior user copies are never lost
+                let pb = NSPasteboard.general
+                let savedPasteboard = Self.snapshotPasteboard(pb)
                 pb.clearContents()
                 pb.setString(titleQuery, forType: .string)
-                let afterSetChangeCount = pb.changeCount
+                self.pendingClipboardRestore = PendingClipboardRestore(
+                    snapshot: savedPasteboard,
+                    expectedChangeCount: pb.changeCount
+                )
                 // Cmd + V (keyCode 9)
                 Self.postKey(9, flags: .maskCommand)
 
                 // Wait for React input debounce + language_server FTS5 query + list re-render
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) { [weak self] in
-                    // Return (keyCode 36) to open the #1 exact-title match
-                    Self.postKey(36, flags: [])
-                    self?.jumpLogger.info("Sent Return in Antigravity Cmd+K palette")
+                self.scheduleJumpStep(after: 0.65, token: token) { [weak self] in
+                    guard let self else { return }
+                    if isTargetFrontmost() && hasVerifiedSearchFieldFocus() {
+                        // Return (keyCode 36) to open the #1 exact-title match
+                        Self.postKey(36, flags: [])
+                        self.jumpLogger.info("Sent Return in Antigravity Cmd+K palette")
+                    } else {
+                        self.jumpLogger.warning("Aborted Return key in Antigravity Cmd+K: focus left search palette")
+                        self.restorePendingClipboardIfUnchanged()
+                        return
+                    }
 
-                    // Cleanly restore previous clipboard content if user hasn't copied something else
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        if let savedString, pb.changeCount == afterSetChangeCount {
-                            pb.clearContents()
-                            pb.setString(savedString, forType: .string)
-                        }
+                    // Cleanly restore full previous clipboard content (images, files, RTF, strings)
+                    self.scheduleJumpStep(after: 0.35, token: token) { [weak self] in
+                        self?.restorePendingClipboardIfUnchanged()
                     }
                 }
             }
@@ -767,7 +1008,8 @@ final class MonitorStore: ObservableObject {
     }
 
     func sendTestNotification() {
-        celebratingUntil = Date().addingTimeInterval(3.8)
+        let deadline = Date().addingTimeInterval(3.8)
+        celebratingUntil = deadline
         if soundEnabled { playSound() }
         onCompletionMoment?()
         let t = l10n
@@ -780,18 +1022,14 @@ final class MonitorStore: ObservableObject {
             body: t.testNotifBody,
             bundleID: AgentKind.antigravity.targetBundleIDs.first ?? ""
         )
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-            self?.objectWillChange.send()
-            self?.notifyCounts()
-        }
+        scheduleMoodReset(until: deadline)
     }
 
     // MARK: - State Machine
 
-    private func applyScanned(_ scanned: [AgentSession]) {
+    func applyScanned(_ scanned: [AgentSession], now: Date = Date()) {
         let isFirst = !didInitialScan
         didInitialScan = true
-        let now = Date()
         if let until = dndUntil, until <= now {
             dndUntil = nil
         }
@@ -799,9 +1037,11 @@ final class MonitorStore: ObservableObject {
         var newlyNeedsInput: [AgentSession] = []
         var processed: [AgentSession] = []
         var ackDirty = false
+        var activeIds = Set<String>()
 
         for raw in scanned {
             var s = raw
+            activeIds.insert(s.id)
             let prev = previousStatus[s.id]
 
             if s.status == .needsInput {
@@ -809,10 +1049,9 @@ final class MonitorStore: ObservableObject {
                 if liveStartedAt[s.id] == nil {
                     liveStartedAt[s.id] = s.startedAt ?? now
                 }
-                let alertKey = s.currentAction
+                let alertKey = "\(Int(s.updatedAt.timeIntervalSince1970))|\(s.currentAction)"
                 let alreadyAlerted = (prev == .needsInput && notifiedNeedsInputKey[s.id] == alertKey)
                 if !isFirst && !alreadyAlerted && !(hideCLISessions && s.isCLI) {
-                    notifiedNeedsInputKey[s.id] = alertKey
                     newlyNeedsInput.append(s)
                 }
                 s = AgentSession(
@@ -855,18 +1094,24 @@ final class MonitorStore: ObservableObject {
                 }
 
                 let lastAck = ackedAt[s.id] ?? 0
-                let rawIsUnread = !s.isCLI && (s.status == .done || s.status == .error) && (compTs > lastAck + 1.0)
-                let alreadyNotified = (notifiedCompletedAt[s.id] ?? 0) >= compTs - 1.0
+                let rawIsUnread = !s.isCLI && (s.status == .done || s.status == .error) && (compTs > lastAck + 0.001)
+                let alreadyNotified = (notifiedCompletedAt[s.id] ?? 0) >= compTs - 0.001
 
-                // Require a continuous settle window before treating a freshly-stopped running turn as done,
-                // preventing premature popups during multi-step handoffs or subagent wakeups.
+                // Require a continuous settle window keyed by (sessionId, completedAt) before treating a
+                // freshly-stopped running/needsInput turn as done, preventing premature popups during handoffs.
                 var settling = false
                 if !isFirst && rawIsUnread && !alreadyNotified {
-                    if prev == .running || pendingFinishSince[s.id] != nil || compDate > launchTime {
-                        if pendingFinishSince[s.id] == nil {
-                            pendingFinishSince[s.id] = now
+                    let existingPending = pendingFinishSince[s.id]
+                    let isFreshTransition = (prev == .running || prev == .needsInput || existingPending != nil || compDate > launchTime)
+                    if isFreshTransition {
+                        let pending: PendingFinish
+                        if let existingPending, abs(existingPending.completedAt - compTs) <= 1.0 {
+                            pending = existingPending
+                        } else {
+                            pending = PendingFinish(completedAt: compTs, since: now)
+                            pendingFinishSince[s.id] = pending
                         }
-                        if let since = pendingFinishSince[s.id], now.timeIntervalSince(since) < completionDebounceSeconds {
+                        if now.timeIntervalSince(pending.since) < completionDebounceSeconds {
                             settling = true
                         }
                     }
@@ -900,7 +1145,6 @@ final class MonitorStore: ObservableObject {
                 )
 
                 if confirmedFreshFinish && rawIsUnread && !alreadyNotified && !s.isCLI {
-                    notifiedCompletedAt[s.id] = compTs
                     newlyFinished.append(s)
                 }
             }
@@ -909,49 +1153,107 @@ final class MonitorStore: ObservableObject {
             processed.append(s)
         }
 
+        // Never let a pending settle timer carry over across a scan where the session disappeared!
+        pendingFinishSince = pendingFinishSince.filter { activeIds.contains($0.key) }
+
+        // Periodic bounded-memory eviction for long-running sessions
+        if now.timeIntervalSince(lastPruneAt) > 600 {
+            lastPruneAt = now
+            previousStatus = previousStatus.filter { activeIds.contains($0.key) }
+            liveStartedAt = liveStartedAt.filter { activeIds.contains($0.key) }
+            pendingFinishSince = pendingFinishSince.filter { activeIds.contains($0.key) }
+            notifiedNeedsInputKey = notifiedNeedsInputKey.filter { activeIds.contains($0.key) }
+            let cutoff7d = now.timeIntervalSince1970 - 7 * 86400
+            let beforeCount = ackedAt.count
+            ackedAt = ackedAt.filter { $0.value >= cutoff7d }
+            if ackedAt.count != beforeCount { ackDirty = true }
+            notifiedCompletedAt = notifiedCompletedAt.filter { $0.value >= cutoff7d }
+        }
+
         if ackDirty { saveAckState() }
 
-        let hasRunning = processed.contains { $0.status == .running || $0.status == .needsInput }
         if processed != allSessions {
             allSessions = processed
+            recomputeDerived()
             notifyCounts()
         }
-        if hasRunning {
-            lastRefreshAt = now
+
+        guard !suppressSystemSideEffects else {
+            for item in newlyNeedsInput {
+                notifiedNeedsInputKey[item.id] = "\(Int(item.updatedAt.timeIntervalSince1970))|\(item.currentAction)"
+            }
+            for item in newlyFinished {
+                notifiedCompletedAt[item.id] = (item.completedAt ?? item.updatedAt).timeIntervalSince1970
+            }
+            if newlyFinished.contains(where: { $0.status == .done }) && !isDNDActive {
+                celebratingUntil = now.addingTimeInterval(4.5)
+            }
+            return
         }
 
         let mutedByDND = isDNDActive
         let t = l10n
 
-        if !newlyNeedsInput.isEmpty && !mutedByDND {
-            onCompletionMoment?()
-            if soundEnabled { playSound("Ping") }
-            if notificationsEnabled {
-                for item in newlyNeedsInput.prefix(2) {
-                    postNotification(
-                        id: "input-\(item.id)-\(Int(item.updatedAt.timeIntervalSince1970))",
-                        sessionId: item.id,
-                        deepLink: deepLinkString(for: item),
-                        title: t.needsInputNotifTitle(kind: item.kind, project: t.project(item.project)),
-                        subtitle: item.title,
-                        body: t.needsInputNotifBody(kind: item.kind),
-                        bundleID: item.kind.targetBundleIDs.first ?? ""
-                    )
+        if !newlyNeedsInput.isEmpty {
+            let batch = Array(newlyNeedsInput.prefix(2))
+            for item in batch {
+                notifiedNeedsInputKey[item.id] = "\(Int(item.updatedAt.timeIntervalSince1970))|\(item.currentAction)"
+            }
+            if !mutedByDND {
+                onCompletionMoment?()
+                if soundEnabled && now.timeIntervalSince(lastAlertSoundAt) >= 2.5 {
+                    lastAlertSoundAt = now
+                    playSound("Ping")
+                }
+                if notificationsEnabled {
+                    for item in batch {
+                        postNotification(
+                            id: "input-\(item.id)-\(Int(item.updatedAt.timeIntervalSince1970))",
+                            sessionId: item.id,
+                            deepLink: deepLinkString(for: item),
+                            completedAt: nil,
+                            title: t.needsInputNotifTitle(kind: item.kind, project: t.project(item.project)),
+                            subtitle: item.title,
+                            body: t.needsInputNotifBody(kind: item.kind),
+                            bundleID: item.kind.targetBundleIDs.first ?? ""
+                        )
+                    }
                 }
             }
         }
 
         if !newlyFinished.isEmpty {
-            celebratingUntil = now.addingTimeInterval(4.5)
+            let batch = Array(newlyFinished.prefix(3))
+            for item in batch {
+                notifiedCompletedAt[item.id] = (item.completedAt ?? item.updatedAt).timeIntervalSince1970
+            }
+            // Keep overflow items pending so they fire cleanly on the next tick instead of being dropped forever
+            if newlyFinished.count > 3 {
+                for overflow in newlyFinished.dropFirst(3) {
+                    let ts = (overflow.completedAt ?? overflow.updatedAt).timeIntervalSince1970
+                    pendingFinishSince[overflow.id] = PendingFinish(completedAt: ts, since: now.addingTimeInterval(-completionDebounceSeconds))
+                }
+            }
+            let hasSuccessfulDone = newlyFinished.contains { $0.status == .done }
+            if hasSuccessfulDone && !mutedByDND {
+                let deadline = now.addingTimeInterval(4.5)
+                celebratingUntil = deadline
+                scheduleMoodReset(until: deadline)
+            }
             if !mutedByDND {
                 onCompletionMoment?()
-                if soundEnabled { playSound() }
+                if soundEnabled && now.timeIntervalSince(lastAlertSoundAt) >= 2.5 {
+                    lastAlertSoundAt = now
+                    playSound()
+                }
                 if notificationsEnabled {
-                    for item in newlyFinished.prefix(3) {
+                    for item in batch {
+                        let compTs = (item.completedAt ?? now).timeIntervalSince1970
                         postNotification(
-                            id: "\(item.id)-\(Int((item.completedAt ?? now).timeIntervalSince1970))",
+                            id: "\(item.id)-\(Int(compTs))",
                             sessionId: item.id,
                             deepLink: deepLinkString(for: item),
+                            completedAt: compTs,
                             title: t.finishNotifTitle(kind: item.kind, project: t.project(item.project), isError: item.status == .error),
                             subtitle: item.title,
                             body: t.finishNotifBody(kind: item.kind),
@@ -960,10 +1262,6 @@ final class MonitorStore: ObservableObject {
                     }
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.8) { [weak self] in
-                self?.objectWillChange.send()
-                self?.notifyCounts()
-            }
         }
     }
 
@@ -971,7 +1269,7 @@ final class MonitorStore: ObservableObject {
         onCountsChanged?(totalRunningCount, totalUnreadCount, totalNeedsInputCount, mascotMood)
     }
 
-    private func postNotification(id: String, sessionId: String?, deepLink: String?, title: String, subtitle: String, body: String, bundleID: String) {
+    private func postNotification(id: String, sessionId: String?, deepLink: String?, completedAt: TimeInterval? = nil, title: String, subtitle: String, body: String, bundleID: String) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.subtitle = subtitle
@@ -979,8 +1277,14 @@ final class MonitorStore: ObservableObject {
         var info: [String: Any] = ["bundleID": bundleID]
         if let sessionId { info["sessionId"] = sessionId }
         if let deepLink { info["deepLink"] = deepLink }
+        if let completedAt { info["completedAt"] = completedAt }
         content.userInfo = info
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+        let logger = jumpLogger
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
+            if let error {
+                logger.error("Failed to post macOS notification: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     private func loadAckState() {

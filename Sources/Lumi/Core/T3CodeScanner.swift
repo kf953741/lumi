@@ -14,7 +14,7 @@ struct T3CodeScanResult: Sendable {
     /// Active T3 Code runs whose `nativeThreadRef` has not yet been written (first-second race window).
     let pendingMatches: [T3PendingMatch]
 
-    func ownsUnderlying(_ session: AgentSession) -> Bool {
+    func ownsUnderlying(_ session: AgentSession, now: Date = Date()) -> Bool {
         guard session.kind != .t3code else { return false }
         if ownedNativeSessionIds.contains(session.id) {
             return true
@@ -24,14 +24,19 @@ struct T3CodeScanResult: Sendable {
             return true
         }
         let normCwd = T3CodeScanner.normalizePath(session.cwd)
-        if normCwd.contains("/.t3/scratch")
+        // Only suppress T3 scratch/worktree paths when T3 actually produced visible sessions,
+        // so a failed/empty T3 scan can never hide the user's only visible copy of a session.
+        if !sessions.isEmpty,
+           (normCwd.contains("/.t3/scratch")
             || normCwd.contains("/.t3/worktrees")
-            || normCwd.contains("/.t3/userdata") {
+            || normCwd.contains("/.t3/userdata")) {
             return true
         }
         if !pendingMatches.isEmpty, !normCwd.isEmpty {
             let refTime = session.startedAt ?? session.updatedAt
             for pm in pendingMatches where pm.providerKey == session.kind.rawValue && pm.normalizedCwd == normCwd {
+                // Pending match expires 30s after launch so stale matches never suppress later standalone runs
+                guard abs(now.timeIntervalSince(pm.startedAt)) <= 30 else { continue }
                 if abs(refTime.timeIntervalSince(pm.startedAt)) <= 20 {
                     return true
                 }
@@ -67,6 +72,7 @@ final class T3CodeScanner: @unchecked Sendable {
     }
 
     private struct FileStamp: Equatable {
+        let inode: UInt64
         let size: Int64
         let mtimeSec: Int
         let mtimeNsec: Int
@@ -74,9 +80,10 @@ final class T3CodeScanner: @unchecked Sendable {
         static func read(_ path: String) -> FileStamp {
             var st = stat()
             guard stat(path, &st) == 0 else {
-                return FileStamp(size: -1, mtimeSec: 0, mtimeNsec: 0)
+                return FileStamp(inode: 0, size: -1, mtimeSec: 0, mtimeNsec: 0)
             }
             return FileStamp(
+                inode: UInt64(st.st_ino),
                 size: st.st_size,
                 mtimeSec: st.st_mtimespec.tv_sec,
                 mtimeNsec: st.st_mtimespec.tv_nsec
@@ -90,27 +97,27 @@ final class T3CodeScanner: @unchecked Sendable {
         return set
     }()
 
-    private static let isoFracFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    private static let isoBasicFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
+    private static func defaultUserDataDir() -> String {
+        if let envHome = ProcessInfo.processInfo.environment["T3CODE_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !envHome.isEmpty {
+            let expanded = (envHome as NSString).expandingTildeInPath
+            return "\(expanded)/userdata"
+        }
+        return "\(NSHomeDirectory())/.t3/userdata"
+    }
 
     init(
-        v2DbPath: String = "\(NSHomeDirectory())/.t3/userdata/statev2.sqlite",
-        v1DbPath: String = "\(NSHomeDirectory())/.t3/userdata/state.sqlite",
+        v2DbPath: String? = nil,
+        v1DbPath: String? = nil,
         environmentIdPath: String? = nil,
         isT3RunningCheck: (@Sendable () -> Bool)? = nil
     ) {
-        self.v2DbPath = v2DbPath
-        self.v1DbPath = v1DbPath
-        self.environmentIdPath = environmentIdPath ?? URL(fileURLWithPath: v2DbPath)
+        let userData = Self.defaultUserDataDir()
+        let resolvedV2 = v2DbPath ?? "\(userData)/statev2.sqlite"
+        self.v2DbPath = resolvedV2
+        self.v1DbPath = v1DbPath ?? "\(userData)/state.sqlite"
+        self.environmentIdPath = environmentIdPath ?? URL(fileURLWithPath: resolvedV2)
             .deletingLastPathComponent()
             .appendingPathComponent("environment-id")
             .path
@@ -191,20 +198,44 @@ final class T3CodeScanner: @unchecked Sendable {
         var seenThreadIds = Set<String>()
         var ownedNativeIds = Set<String>()
         var pendingMatches: [T3PendingMatch] = []
+        var hadTransientDBFailure = false
+        let fm = FileManager.default
 
-        if let v2 = SQLiteReader(path: v2DbPath) {
-            let v2Res = scanV2(reader: v2, lookbackHours: lookbackHours, now: now, appRunning: appRunning)
-            for s in v2Res.sessions {
-                seenThreadIds.insert(s.rawId)
-                results.append(s)
+        if fm.fileExists(atPath: v2DbPath) {
+            if let v2 = SQLiteReader(path: v2DbPath),
+               let v2Res = scanV2(reader: v2, lookbackHours: lookbackHours, now: now, appRunning: appRunning) {
+                for s in v2Res.sessions {
+                    seenThreadIds.insert(s.rawId)
+                    results.append(s)
+                }
+                ownedNativeIds.formUnion(v2Res.ownedNativeSessionIds)
+                pendingMatches.append(contentsOf: v2Res.pendingMatches)
+            } else {
+                hadTransientDBFailure = true
             }
-            ownedNativeIds.formUnion(v2Res.ownedNativeSessionIds)
-            pendingMatches.append(contentsOf: v2Res.pendingMatches)
         }
 
-        if let v1 = SQLiteReader(path: v1DbPath) {
-            let v1Sessions = scanV1(reader: v1, excluding: seenThreadIds, lookbackHours: lookbackHours, now: now)
-            results.append(contentsOf: v1Sessions)
+        if fm.fileExists(atPath: v1DbPath) {
+            if let v1 = SQLiteReader(path: v1DbPath),
+               let v1Sessions = scanV1(reader: v1, excluding: seenThreadIds, lookbackHours: lookbackHours, now: now) {
+                results.append(contentsOf: v1Sessions)
+            } else {
+                hadTransientDBFailure = true
+            }
+        }
+
+        if hadTransientDBFailure {
+            cacheLock.lock()
+            let fallback = cachedScanResult
+            cacheLock.unlock()
+            if let fallback, results.isEmpty {
+                return fallback
+            }
+            return T3CodeScanResult(
+                sessions: results,
+                ownedNativeSessionIds: ownedNativeIds,
+                pendingMatches: pendingMatches
+            )
         }
 
         let finalResult = T3CodeScanResult(
@@ -260,12 +291,18 @@ final class T3CodeScanner: @unchecked Sendable {
         var latestActivityAt: Date?
     }
 
-    private func scanV2(reader: SQLiteReader, lookbackHours: Double, now: Date, appRunning: Bool) -> T3CodeScanResult {
+    private func scanV2(reader: SQLiteReader, lookbackHours: Double, now: Date, appRunning: Bool) -> T3CodeScanResult? {
+        reader.withReadTransaction {
+            scanV2Locked(reader: reader, lookbackHours: lookbackHours, now: now, appRunning: appRunning)
+        }
+    }
+
+    private func scanV2Locked(reader: SQLiteReader, lookbackHours: Double, now: Date, appRunning: Bool) -> T3CodeScanResult? {
         let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
 
         // 1. Projects map
         var projects: [String: V2Project] = [:]
-        reader.query("SELECT project_id, title, workspace_root FROM projection_projects;") { stmt in
+        _ = reader.query("SELECT project_id, title, workspace_root FROM projection_projects;") { stmt in
             let pid = SQLiteReader.string(stmt, 0)
             let title = SQLiteReader.string(stmt, 1)
             let root = SQLiteReader.string(stmt, 2)
@@ -276,7 +313,7 @@ final class T3CodeScanner: @unchecked Sendable {
 
         // 2. Latest run per thread
         var latestRuns: [String: V2Run] = [:]
-        reader.query("""
+        let runsOk = reader.query("""
             SELECT run_id, thread_id, ordinal, provider, status, requested_at, completed_at
             FROM orchestration_v2_projection_runs
             ORDER BY thread_id ASC, ordinal DESC, requested_at DESC;
@@ -293,29 +330,35 @@ final class T3CodeScanner: @unchecked Sendable {
                 completedAt: Self.parseISO(SQLiteReader.string(stmt, 6))
             )
         }
+        guard runsOk else { return nil }
 
         // 3. Active provider runtimes (catches imported threads actively resumed inside T3 Code)
         var runningRuntimeThreads = Set<String>()
-        reader.query("""
+        var waitingRuntimeThreads = Set<String>()
+        _ = reader.query("""
             SELECT thread_id, status
             FROM provider_session_runtime
             WHERE lower(status) IN ('running', 'starting', 'busy', 'waiting', 'waiting_for_approval', 'waiting_for_input');
             """) { stmt in
             let tid = SQLiteReader.string(stmt, 0)
-            if !tid.isEmpty { runningRuntimeThreads.insert(tid) }
+            let st = SQLiteReader.string(stmt, 1).lowercased()
+            if !tid.isEmpty {
+                if Self.isWaitingRunStatus(st) {
+                    waitingRuntimeThreads.insert(tid)
+                } else {
+                    runningRuntimeThreads.insert(tid)
+                }
+            }
         }
 
-        // 4. Threads (non-deleted, non-archived)
-        var threads: [V2Thread] = []
-        reader.query("""
-            SELECT thread_id, project_id, title, default_provider, created_at, updated_at, payload_json
-            FROM orchestration_v2_projection_threads
-            WHERE deleted_at IS NULL AND archived_at IS NULL
-            ORDER BY updated_at DESC
-            LIMIT 80;
-            """) { stmt in
+        // 4. Threads (non-deleted, non-archived): fetch top 100 recent PLUS any active/waiting threads
+        //    and any missing root/parent threads of active children so LIMIT can never truncate active work.
+        var threadsById: [String: V2Thread] = [:]
+        var threadOrder: [String] = []
+
+        func appendThreadRow(_ stmt: OpaquePointer) {
             let tid = SQLiteReader.string(stmt, 0)
-            guard !tid.isEmpty else { return }
+            guard !tid.isEmpty, threadsById[tid] == nil else { return }
             let payloadStr = SQLiteReader.string(stmt, 6)
             let payload = Self.parseJSONObject(payloadStr)
             let worktree = payload["worktreePath"] as? String ?? ""
@@ -323,9 +366,9 @@ final class T3CodeScanner: @unchecked Sendable {
             let parentTid = lineage?["parentThreadId"] as? String
             let rootTid = lineage?["rootThreadId"] as? String
 
-            let createdAt = Self.parseISO(SQLiteReader.string(stmt, 4)) ?? now
+            let createdAt = Self.parseISO(SQLiteReader.string(stmt, 4)) ?? .distantPast
             let updatedAt = Self.parseISO(SQLiteReader.string(stmt, 5)) ?? createdAt
-            threads.append(V2Thread(
+            let thread = V2Thread(
                 threadId: tid,
                 projectId: SQLiteReader.string(stmt, 1),
                 title: SQLiteReader.string(stmt, 2),
@@ -335,23 +378,79 @@ final class T3CodeScanner: @unchecked Sendable {
                 worktreePath: worktree,
                 parentThreadId: (parentTid?.isEmpty == false) ? parentTid : nil,
                 rootThreadId: (rootTid?.isEmpty == false) ? rootTid : nil
-            ))
+            )
+            threadsById[tid] = thread
+            threadOrder.append(tid)
         }
+
+        let threadsOk = reader.query("""
+            SELECT thread_id, project_id, title, default_provider, created_at, updated_at, payload_json
+            FROM orchestration_v2_projection_threads
+            WHERE deleted_at IS NULL AND archived_at IS NULL
+            ORDER BY updated_at DESC
+            LIMIT 100;
+            """, rowHandler: appendThreadRow)
+        guard threadsOk else { return nil }
+
+        // Ensure every active/waiting thread (from latestRuns or provider_session_runtime) is included
+        var missingThreadIds = Set<String>()
+        for (tid, run) in latestRuns where Self.isActiveRunStatus(run.status) || Self.isWaitingRunStatus(run.status) {
+            if threadsById[tid] == nil { missingThreadIds.insert(tid) }
+        }
+        for tid in runningRuntimeThreads where threadsById[tid] == nil { missingThreadIds.insert(tid) }
+        for tid in waitingRuntimeThreads where threadsById[tid] == nil { missingThreadIds.insert(tid) }
+
+        func fetchMissingThreads(_ ids: Set<String>) {
+            guard !ids.isEmpty else { return }
+            let inClause = ids.map { Self.sqlLiteral($0) }.joined(separator: ",")
+            _ = reader.query("""
+                SELECT thread_id, project_id, title, default_provider, created_at, updated_at, payload_json
+                FROM orchestration_v2_projection_threads
+                WHERE deleted_at IS NULL AND archived_at IS NULL
+                  AND thread_id IN (\(inClause));
+                """, rowHandler: appendThreadRow)
+        }
+        fetchMissingThreads(missingThreadIds)
+
+        // Ensure parents/roots of any loaded child threads are also loaded before rollup
+        var missingParents = Set<String>()
+        for th in threadsById.values {
+            if let rootId = th.rootThreadId, threadsById[rootId] == nil { missingParents.insert(rootId) }
+            if let parentId = th.parentThreadId, threadsById[parentId] == nil { missingParents.insert(parentId) }
+        }
+        fetchMissingThreads(missingParents)
+
+        let threads = threadOrder.compactMap { threadsById[$0] }
 
         // Separate root threads vs child subagent threads so child runs roll up cleanly onto their root thread
         var childRunningByRoot: [String: Int] = [:]
         var childNeedsInputByRoot: [String: String] = [:]
+        var childThreadIdsByRoot: [String: [String]] = [:]
         var rootThreads: [V2Thread] = []
 
         for th in threads {
             if let parentId = th.parentThreadId {
                 let rootKey = th.rootThreadId ?? parentId
-                if let run = latestRuns[th.threadId] {
-                    if Self.isWaitingRunStatus(run.status) {
-                        childNeedsInputByRoot[rootKey] = "等待你的审批或回复"
-                    } else if Self.isActiveRunStatus(run.status) {
-                        childRunningByRoot[rootKey, default: 0] += 1
+                childThreadIdsByRoot[rootKey, default: []].append(th.threadId)
+                let childRun = latestRuns[th.threadId]
+                let childWaitingRuntime = waitingRuntimeThreads.contains(th.threadId)
+                let childRunningRuntime = runningRuntimeThreads.contains(th.threadId)
+                if let run = childRun {
+                    if Self.isWaitingRunStatus(run.status) || childWaitingRuntime {
+                        let detail = inspectV2Run(reader: reader, runId: run.runId)
+                        childNeedsInputByRoot[rootKey] = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
+                    } else if Self.isActiveRunStatus(run.status) || childRunningRuntime {
+                        let detail = inspectV2Run(reader: reader, runId: run.runId)
+                        if detail.hasPendingApproval {
+                            childNeedsInputByRoot[rootKey] = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
+                        } else {
+                            childRunningByRoot[rootKey, default: 0] += 1
+                        }
                     }
+                } else if childWaitingRuntime {
+                    childNeedsInputByRoot[rootKey] = "等待你的审批或回复"
+                } else if childRunningRuntime {
+                    childRunningByRoot[rootKey, default: 0] += 1
                 }
                 continue
             }
@@ -362,7 +461,10 @@ final class T3CodeScanner: @unchecked Sendable {
         var runDetails: [String: V2RunDetail] = [:]
         for th in rootThreads {
             guard let run = latestRuns[th.threadId] else { continue }
-            let isPotentiallyActive = Self.isActiveRunStatus(run.status) || Self.isWaitingRunStatus(run.status) || runningRuntimeThreads.contains(th.threadId)
+            let isPotentiallyActive = Self.isActiveRunStatus(run.status)
+                || Self.isWaitingRunStatus(run.status)
+                || runningRuntimeThreads.contains(th.threadId)
+                || waitingRuntimeThreads.contains(th.threadId)
             guard isPotentiallyActive || th.updatedAt >= cutoff else { continue }
             if !isPotentiallyActive {
                 cacheLock.lock()
@@ -385,64 +487,19 @@ final class T3CodeScanner: @unchecked Sendable {
             }
         }
 
-        // 5b. Map T3-owned threads to their underlying provider native session IDs
-        // (e.g. `nativeThreadRef: { driver: "codex", nativeId: "01a20458-..." }`)
-        // so Lumi suppresses duplicate alerts from Codex/Claude/Antigravity scanners.
-        var ownedNativeIds = Set<String>()
-        var threadsWithNativeRef = Set<String>()
-        let ownedThreadIds = Set(
-            threads
-                .filter { !$0.threadId.hasPrefix("import:") || latestRuns[$0.threadId] != nil || runningRuntimeThreads.contains($0.threadId) }
-                .map(\.threadId)
-        )
-        reader.query("""
-            SELECT thread_id, provider, payload_json
-            FROM orchestration_v2_projection_provider_threads;
-            """) { stmt in
-            let tid = SQLiteReader.string(stmt, 0)
-            guard !tid.isEmpty, ownedThreadIds.contains(tid) || latestRuns[tid] != nil else { return }
-            let colProvider = SQLiteReader.string(stmt, 1)
-            let payload = Self.parseJSONObject(SQLiteReader.string(stmt, 2))
-            if let ref = payload["nativeThreadRef"] as? [String: Any],
-               let nativeId = ref["nativeId"] as? String,
-               !nativeId.isEmpty,
-               !nativeId.hasPrefix("pending:") {
-                let rawDriver = (ref["driver"] as? String) ?? colProvider
-                if let key = Self.normalizeProviderKey(rawDriver) {
-                    ownedNativeIds.insert("\(key):\(nativeId)")
-                    threadsWithNativeRef.insert(tid)
-                }
-            }
-        }
-
-        // Also check provider_session_runtime resume_cursor_json for any active/run-backed T3 thread
-        reader.query("""
-            SELECT thread_id, provider_name, resume_cursor_json
-            FROM provider_session_runtime;
-            """) { stmt in
-            let tid = SQLiteReader.string(stmt, 0)
-            guard !tid.isEmpty, ownedThreadIds.contains(tid) else { return }
-            let rawProvider = SQLiteReader.string(stmt, 1)
-            let cursor = Self.parseJSONObject(SQLiteReader.string(stmt, 2))
-            if let nativeId = (cursor["threadId"] as? String) ?? (cursor["sessionId"] as? String),
-               !nativeId.isEmpty,
-               !nativeId.hasPrefix("pending:"),
-               let key = Self.normalizeProviderKey(rawProvider) {
-                ownedNativeIds.insert("\(key):\(nativeId)")
-                threadsWithNativeRef.insert(tid)
-            }
-        }
-
-        // 6. Build AgentSession list
+        // 6. Build AgentSession list FIRST so we know exactly which threads are actually visible
         var sessions: [AgentSession] = []
-        var pendingMatches: [T3PendingMatch] = []
+        var emittedRootThreadIds = Set<String>()
+        var pendingCandidates: [(threadId: String, providerKey: String, normalizedCwd: String, startedAt: Date)] = []
+
         for th in rootThreads {
             let run = latestRuns[th.threadId]
             let runtimeActive = runningRuntimeThreads.contains(th.threadId)
+            let runtimeWaiting = waitingRuntimeThreads.contains(th.threadId)
 
             // Skip untouched imported threads (e.g. `import:codex:<uuid>`) that have never run in T3 Code,
             // preventing duplicates of threads already shown by CodexScanner / ClaudeScanner.
-            if th.threadId.hasPrefix("import:") && run == nil && !runtimeActive {
+            if th.threadId.hasPrefix("import:") && run == nil && !runtimeActive && !runtimeWaiting {
                 continue
             }
 
@@ -450,7 +507,9 @@ final class T3CodeScanner: @unchecked Sendable {
             let childRunning = childRunningByRoot[th.threadId] ?? 0
             let childNeedsPrompt = childNeedsInputByRoot[th.threadId]
 
-            let activityCandidates: [Date] = [th.updatedAt, run?.requestedAt, run?.completedAt, detail.latestActivityAt].compactMap { $0 }
+            let activityCandidates: [Date] = [th.updatedAt, run?.requestedAt, run?.completedAt, detail.latestActivityAt]
+                .compactMap { $0 }
+                .filter { $0 > .distantPast }
             let latestActivity = activityCandidates.max() ?? th.updatedAt
 
             // Determine raw status
@@ -461,6 +520,9 @@ final class T3CodeScanner: @unchecked Sendable {
                 status = .needsInput
                 action = childPrompt
             } else if detail.hasPendingApproval {
+                status = .needsInput
+                action = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
+            } else if runtimeWaiting {
                 status = .needsInput
                 action = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
             } else if let run {
@@ -516,8 +578,8 @@ final class T3CodeScanner: @unchecked Sendable {
             let cleanTitle = ProjectNameHelper.cleanOneLine(th.title, maxLength: 78)
             let displayTitle = cleanTitle.isEmpty ? (projectName.isEmpty ? "T3 Code 对话" : projectName) : cleanTitle
 
-            let startedAt = run?.requestedAt ?? th.createdAt
-            let completedAt: Date? = isActive ? nil : (run?.completedAt ?? latestActivity)
+            let startedAt = run?.requestedAt ?? (th.createdAt > .distantPast ? th.createdAt : nil)
+            let completedAt: Date? = isActive ? nil : (run?.completedAt ?? (latestActivity > .distantPast ? latestActivity : nil))
             let durationSec: TimeInterval? = {
                 guard !isActive, let s = run?.requestedAt, let c = completedAt else { return nil }
                 let d = c.timeIntervalSince(s)
@@ -526,14 +588,17 @@ final class T3CodeScanner: @unchecked Sendable {
 
             let activeSubs = max(detail.activeSubagents, childRunning)
 
+            emittedRootThreadIds.insert(th.threadId)
+
             if isActive,
-               !threadsWithNativeRef.contains(th.threadId),
                let provKey = Self.normalizeProviderKey(run?.provider ?? th.defaultProvider),
-               !cwd.isEmpty {
-                pendingMatches.append(T3PendingMatch(
+               !cwd.isEmpty,
+               let start = startedAt {
+                pendingCandidates.append((
+                    threadId: th.threadId,
                     providerKey: provKey,
                     normalizedCwd: Self.normalizePath(cwd),
-                    startedAt: startedAt
+                    startedAt: start
                 ))
             }
 
@@ -555,6 +620,65 @@ final class T3CodeScanner: @unchecked Sendable {
                 activeSubagents: activeSubs,
                 isUnread: false
             ))
+        }
+
+        // 7. Map ONLY emitted T3 threads (and their rolled-up child threads) to underlying native session IDs.
+        //    Archived, deleted, out-of-window, or untouched imported threads never suppress standalone sessions.
+        var ownedThreadIds = emittedRootThreadIds
+        for rootId in emittedRootThreadIds {
+            if let children = childThreadIdsByRoot[rootId] {
+                ownedThreadIds.formUnion(children)
+            }
+        }
+
+        var ownedNativeIds = Set<String>()
+        var threadsWithNativeRef = Set<String>()
+        if !ownedThreadIds.isEmpty {
+            _ = reader.query("""
+                SELECT thread_id, provider, payload_json
+                FROM orchestration_v2_projection_provider_threads;
+                """) { stmt in
+                let tid = SQLiteReader.string(stmt, 0)
+                guard !tid.isEmpty, ownedThreadIds.contains(tid) else { return }
+                let colProvider = SQLiteReader.string(stmt, 1)
+                let payload = Self.parseJSONObject(SQLiteReader.string(stmt, 2))
+                if let ref = payload["nativeThreadRef"] as? [String: Any],
+                   let nativeId = ref["nativeId"] as? String,
+                   !nativeId.isEmpty,
+                   !nativeId.hasPrefix("pending:") {
+                    let rawDriver = (ref["driver"] as? String) ?? colProvider
+                    if let key = Self.normalizeProviderKey(rawDriver) {
+                        ownedNativeIds.insert("\(key):\(nativeId)")
+                        threadsWithNativeRef.insert(tid)
+                    }
+                }
+            }
+
+            _ = reader.query("""
+                SELECT thread_id, provider_name, resume_cursor_json
+                FROM provider_session_runtime;
+                """) { stmt in
+                let tid = SQLiteReader.string(stmt, 0)
+                guard !tid.isEmpty, ownedThreadIds.contains(tid) else { return }
+                let rawProvider = SQLiteReader.string(stmt, 1)
+                let cursor = Self.parseJSONObject(SQLiteReader.string(stmt, 2))
+                if let nativeId = (cursor["threadId"] as? String) ?? (cursor["sessionId"] as? String),
+                   !nativeId.isEmpty,
+                   !nativeId.hasPrefix("pending:"),
+                   let key = Self.normalizeProviderKey(rawProvider) {
+                    ownedNativeIds.insert("\(key):\(nativeId)")
+                    threadsWithNativeRef.insert(tid)
+                }
+            }
+        }
+
+        let pendingMatches: [T3PendingMatch] = pendingCandidates.compactMap { cand in
+            guard !threadsWithNativeRef.contains(cand.threadId) else { return nil }
+            return T3PendingMatch(
+                providerKey: cand.providerKey,
+                normalizedCwd: cand.normalizedCwd,
+                startedAt: cand.startedAt
+            )
         }
 
         return T3CodeScanResult(
@@ -637,58 +761,60 @@ final class T3CodeScanner: @unchecked Sendable {
 
     // MARK: - Legacy T3 Code v1 (state.sqlite) Fallback
 
-    private func scanV1(reader: SQLiteReader, excluding seen: Set<String>, lookbackHours: Double, now: Date) -> [AgentSession] {
-        let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
-        var projects: [String: V2Project] = [:]
-        reader.query("SELECT project_id, title, workspace_root FROM projection_projects;") { stmt in
-            let pid = SQLiteReader.string(stmt, 0)
-            if !pid.isEmpty {
-                projects[pid] = V2Project(title: SQLiteReader.string(stmt, 1), workspaceRoot: SQLiteReader.string(stmt, 2))
+    private func scanV1(reader: SQLiteReader, excluding seen: Set<String>, lookbackHours: Double, now: Date) -> [AgentSession]? {
+        reader.withReadTransaction {
+            let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
+            var projects: [String: V2Project] = [:]
+            _ = reader.query("SELECT project_id, title, workspace_root FROM projection_projects;") { stmt in
+                let pid = SQLiteReader.string(stmt, 0)
+                if !pid.isEmpty {
+                    projects[pid] = V2Project(title: SQLiteReader.string(stmt, 1), workspaceRoot: SQLiteReader.string(stmt, 2))
+                }
             }
+
+            var results: [AgentSession] = []
+            let ok = reader.query("""
+                SELECT thread_id, project_id, title, worktree_path, created_at, updated_at,
+                       pending_approval_count, pending_user_input_count
+                FROM projection_threads
+                WHERE deleted_at IS NULL AND archived_at IS NULL
+                ORDER BY updated_at DESC
+                LIMIT 50;
+                """) { stmt in
+                let tid = SQLiteReader.string(stmt, 0)
+                guard !tid.isEmpty, !seen.contains(tid) else { return }
+                let updatedAt = Self.parseISO(SQLiteReader.string(stmt, 5)) ?? .distantPast
+                let pendingApprovals = SQLiteReader.int(stmt, 6)
+                let pendingInputs = SQLiteReader.int(stmt, 7)
+                let needsInput = pendingApprovals > 0 || pendingInputs > 0
+                guard needsInput || updatedAt >= cutoff else { return }
+
+                let proj = projects[SQLiteReader.string(stmt, 1)]
+                let worktree = SQLiteReader.string(stmt, 3)
+                let projectName = Self.resolveProjectName(project: proj, worktreePath: worktree)
+                let cleanTitle = ProjectNameHelper.cleanOneLine(SQLiteReader.string(stmt, 2), maxLength: 78)
+
+                results.append(AgentSession(
+                    id: "t3code:\(tid)",
+                    rawId: tid,
+                    kind: .t3code,
+                    title: cleanTitle.isEmpty ? "T3 Code 对话" : cleanTitle,
+                    project: projectName,
+                    cwd: !worktree.isEmpty ? worktree : (proj?.workspaceRoot ?? ""),
+                    isCLI: false,
+                    status: needsInput ? .needsInput : .done,
+                    currentAction: needsInput ? "等待你的审批或回复" : "已完成",
+                    detailSummary: "",
+                    startedAt: Self.parseISO(SQLiteReader.string(stmt, 4)),
+                    updatedAt: updatedAt,
+                    completedAt: needsInput ? nil : updatedAt,
+                    durationSec: nil,
+                    activeSubagents: 0,
+                    isUnread: false
+                ))
+            }
+            return ok ? results : nil
         }
-
-        var results: [AgentSession] = []
-        reader.query("""
-            SELECT thread_id, project_id, title, worktree_path, created_at, updated_at,
-                   pending_approval_count, pending_user_input_count
-            FROM projection_threads
-            WHERE deleted_at IS NULL AND archived_at IS NULL
-            ORDER BY updated_at DESC
-            LIMIT 50;
-            """) { stmt in
-            let tid = SQLiteReader.string(stmt, 0)
-            guard !tid.isEmpty, !seen.contains(tid) else { return }
-            let updatedAt = Self.parseISO(SQLiteReader.string(stmt, 5)) ?? now
-            let pendingApprovals = SQLiteReader.int(stmt, 6)
-            let pendingInputs = SQLiteReader.int(stmt, 7)
-            let needsInput = pendingApprovals > 0 || pendingInputs > 0
-            guard needsInput || updatedAt >= cutoff else { return }
-
-            let proj = projects[SQLiteReader.string(stmt, 1)]
-            let worktree = SQLiteReader.string(stmt, 3)
-            let projectName = Self.resolveProjectName(project: proj, worktreePath: worktree)
-            let cleanTitle = ProjectNameHelper.cleanOneLine(SQLiteReader.string(stmt, 2), maxLength: 78)
-
-            results.append(AgentSession(
-                id: "t3code:\(tid)",
-                rawId: tid,
-                kind: .t3code,
-                title: cleanTitle.isEmpty ? "T3 Code 对话" : cleanTitle,
-                project: projectName,
-                cwd: !worktree.isEmpty ? worktree : (proj?.workspaceRoot ?? ""),
-                isCLI: false,
-                status: needsInput ? .needsInput : .done,
-                currentAction: needsInput ? "等待你的审批或回复" : "已完成",
-                detailSummary: "",
-                startedAt: Self.parseISO(SQLiteReader.string(stmt, 4)),
-                updatedAt: updatedAt,
-                completedAt: needsInput ? nil : updatedAt,
-                durationSec: nil,
-                activeSubagents: 0,
-                isUnread: false
-            ))
-        }
-        return results
     }
 
     // MARK: - Formatting & Helpers
@@ -782,60 +908,9 @@ final class T3CodeScanner: @unchecked Sendable {
         return obj
     }
 
-    /// Lock-free ASCII UTC ISO-8601 parser (`YYYY-MM-DDTHH:MM:SS[.fff]Z`), ~300x faster than
-    /// Foundation's `ISO8601DateFormatter`, with automatic fallback for non-`Z` timezone offsets.
+    /// Strict lock-free ASCII ISO-8601 parser delegating to `FastISO8601Parser`.
     static func parseISO(_ raw: String) -> Date? {
-        guard !raw.isEmpty else { return nil }
-        let bytes = Array(raw.utf8)
-        let n = bytes.count
-        if n >= 20,
-           bytes[4] == 45, bytes[7] == 45, (bytes[10] == 84 || bytes[10] == 32),
-           bytes[13] == 58, bytes[16] == 58,
-           bytes[n - 1] == 90 { // 'Z'
-            @inline(__always)
-            func digits(_ i: Int, _ len: Int) -> Int? {
-                var v = 0
-                for k in 0..<len {
-                    let c = Int(bytes[i + k]) - 48
-                    if c < 0 || c > 9 { return nil }
-                    v = v * 10 + c
-                }
-                return v
-            }
-            if let year = digits(0, 4),
-               let month = digits(5, 2), month >= 1, month <= 12,
-               let day = digits(8, 2), day >= 1, day <= 31,
-               let hour = digits(11, 2), hour <= 23,
-               let minute = digits(14, 2), minute <= 59,
-               let second = digits(17, 2), second <= 60 {
-                var frac = 0.0
-                if n > 20 {
-                    if bytes[19] != 46 { // '.'
-                        return isoFracFormatter.date(from: raw) ?? isoBasicFormatter.date(from: raw)
-                    }
-                    var scale = 0.1
-                    for idx in 20..<(n - 1) {
-                        let c = Int(bytes[idx]) - 48
-                        if c < 0 || c > 9 {
-                            return isoFracFormatter.date(from: raw) ?? isoBasicFormatter.date(from: raw)
-                        }
-                        frac += Double(c) * scale
-                        scale *= 0.1
-                    }
-                }
-                // Howard Hinnant's civil-to-days algorithm (days since 1970-01-01)
-                let y = month <= 2 ? year - 1 : year
-                let era = (y >= 0 ? y : y - 399) / 400
-                let yoe = y - era * 400
-                let mAdj = month + (month > 2 ? -3 : 9)
-                let doy = (153 * mAdj + 2) / 5 + day - 1
-                let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-                let days = era * 146097 + doe - 719468
-                let secs = Double(days * 86400 + hour * 3600 + minute * 60 + second) + frac
-                return Date(timeIntervalSince1970: secs)
-            }
-        }
-        return isoFracFormatter.date(from: raw) ?? isoBasicFormatter.date(from: raw)
+        FastISO8601Parser.parse(raw)
     }
 
     private static func sqlLiteral(_ s: String) -> String {
