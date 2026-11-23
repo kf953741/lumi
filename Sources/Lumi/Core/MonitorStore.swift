@@ -130,6 +130,7 @@ final class MonitorStore: ObservableObject {
     private let codexScanner = CodexScanner()
     private let claudeScanner = ClaudeScanner()
     private let t3Scanner = T3CodeScanner()
+    private let geminiDesktopScanner = GeminiDesktopScanner()
     private let extraScanner = ExtraAgentsScanner()
     private let scanQueue = DispatchQueue(label: "cc.bigsmart.lumi.scan", qos: .utility)
     private let jumpLogger = Logger(subsystem: "cc.bigsmart.Lumi", category: "jump")
@@ -227,6 +228,7 @@ final class MonitorStore: ObservableObject {
         let codex = codexScanner
         let claude = claudeScanner
         let t3 = t3Scanner
+        let geminiDesktop = geminiDesktopScanner
         let extra = extraScanner
         scanQueue.async { [weak self] in
             let t3Result = t3.scanDetailed(lookbackHours: 24)
@@ -235,7 +237,7 @@ final class MonitorStore: ObservableObject {
                 + claude.scan(lookbackHours: 24)
                 + extra.scan(lookbackHours: 24)
             let dedupedUnderlying = underlying.filter { !t3Result.ownsUnderlying($0) }
-            let combined = dedupedUnderlying + t3Result.sessions
+            let combined = dedupedUnderlying + t3Result.sessions + geminiDesktop.scan(lookbackHours: 24)
             Task { @MainActor [weak self] in
                 self?.scanInFlight = false
                 self?.applyScanned(combined)
@@ -477,6 +479,9 @@ final class MonitorStore: ObservableObject {
             return session.rawId.isEmpty ? nil : "codex://threads/\(session.rawId)"
         case .t3code:
             return t3Scanner.deepLinkURL(forThreadId: session.rawId)?.absoluteString
+        case .gemini:
+            guard session.id.hasPrefix("gemini:desktop:") else { return nil }
+            return geminiDesktopScanner.deepLinkURL(forSessionId: session.id)?.absoluteString
         default:
             return nil
         }
@@ -566,6 +571,28 @@ final class MonitorStore: ObservableObject {
                         return
                     }
                 }
+            }
+            return true
+
+        case .gemini:
+            dismissJumpHint()
+            NSApp.keyWindow?.resignKey()
+            if session.id.hasPrefix("gemini:desktop:") {
+                let targetTitle = session.title
+                let deepLink = geminiDesktopScanner.deepLinkURL(forSessionId: session.id)
+                jumpLogger.info("Jumping to Gemini Desktop chat=\(targetTitle, privacy: .public) deepLink=\(deepLink?.absoluteString ?? "nil", privacy: .public)")
+                activateApp(bundleIDs: [GeminiDesktopScanner.bundleID]) { [weak self] in
+                    if let app = NSRunningApplication.runningApplications(withBundleIdentifier: GeminiDesktopScanner.bundleID).first,
+                       AXIsProcessTrusted(),
+                       GeminiDesktopScanner.tryRaiseOrSelectConversation(pid: app.processIdentifier, title: targetTitle) {
+                        return
+                    }
+                    if let deepLink {
+                        self?.openDeepLink(deepLink, bundleIDs: [GeminiDesktopScanner.bundleID])
+                    }
+                }
+            } else {
+                activateApp(bundleIDs: ["com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal"])
             }
             return true
 

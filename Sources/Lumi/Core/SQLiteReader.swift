@@ -62,6 +62,10 @@ final class SQLiteReader {
     static func int64(_ stmt: OpaquePointer, _ col: Int32) -> Int64 {
         sqlite3_column_int64(stmt, col)
     }
+
+    static func double(_ stmt: OpaquePointer, _ col: Int32) -> Double {
+        sqlite3_column_double(stmt, col)
+    }
 }
 
 struct LiveHookRecord {

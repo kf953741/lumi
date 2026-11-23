@@ -407,4 +407,93 @@ final class LumiCoreTests: XCTestCase {
             "t3code://threads/412f7ce2-4663-4a5e-a547-d0c1f060808d/import%3Acodex%3Aabc-123"
         )
     }
+
+    func testGeminiDesktopClassifierHandlesWindowTitlesRunningApprovalsAndSidebarTasks() {
+        // 1. Window title parsing & non-chat settings window exclusion
+        XCTAssertEqual(
+            GeminiDesktopClassifier.extractChatTitle(fromWindowTitle: "Gemini - 如何在 Mac 上使用 Gemini 操控电脑"),
+            "如何在 Mac 上使用 Gemini 操控电脑"
+        )
+        XCTAssertEqual(
+            GeminiDesktopClassifier.extractChatTitle(fromWindowTitle: "Gemini — Build an iOS app"),
+            "Build an iOS app"
+        )
+        XCTAssertEqual(GeminiDesktopClassifier.extractChatTitle(fromWindowTitle: "Gemini"), "")
+        XCTAssertNil(GeminiDesktopClassifier.extractChatTitle(fromWindowTitle: "用量限额"))
+        XCTAssertNil(GeminiDesktopClassifier.extractChatTitle(fromWindowTitle: "Usage Limits"))
+
+        // 2. Running detection via Chinese & English stop-response / stop-task buttons
+        let zhRun = GeminiDesktopClassifier.classifyWindow(
+            buttons: [GeminiAXButton(identifier: "", title: "", description: "停止回答")],
+            statusTexts: []
+        )
+        XCTAssertEqual(zhRun.status, .running)
+
+        let enTaskRun = GeminiDesktopClassifier.classifyWindow(
+            buttons: [GeminiAXButton(identifier: "", title: "", description: "Stop task")],
+            statusTexts: []
+        )
+        XCTAssertEqual(enTaskRun.status, .running)
+
+        // Voice recording stop button must NOT trigger a false running chat state
+        let micStop = GeminiDesktopClassifier.classifyWindow(
+            buttons: [GeminiAXButton(identifier: "recording_stop_button", title: "", description: "停止录音")],
+            statusTexts: []
+        )
+        XCTAssertEqual(micStop.status, .done)
+
+        // 3. Needs-input / Computer Use approval detection
+        let approval = GeminiDesktopClassifier.classifyWindow(
+            buttons: [
+                GeminiAXButton(identifier: "", title: "", description: "停止回答"),
+                GeminiAXButton(identifier: "", title: "", description: "允许一次"),
+                GeminiAXButton(identifier: "", title: "", description: "暂不")
+            ],
+            statusTexts: ["允许 Gemini 使用 Chrome 来处理你的任务？"]
+        )
+        XCTAssertEqual(approval.status, .needsInput)
+        XCTAssertTrue(approval.action.contains("允许 Gemini 使用 Chrome"))
+
+        // 4. Sidebar task badges (ZH & EN)
+        let zhInProg = GeminiDesktopClassifier.parseSidebarTaskRow("“冰岛行程规划”，进行中")
+        XCTAssertEqual(zhInProg?.title, "冰岛行程规划")
+        XCTAssertEqual(zhInProg?.status, .running)
+
+        let enAttn = GeminiDesktopClassifier.parseSidebarTaskRow("Deep research report, Needs attention")
+        XCTAssertEqual(enAttn?.title, "Deep research report")
+        XCTAssertEqual(enAttn?.status, .needsInput)
+
+        let zhReady = GeminiDesktopClassifier.parseSidebarTaskRow("“竞品分析”，准备就绪")
+        XCTAssertEqual(zhReady?.title, "竞品分析")
+        XCTAssertEqual(zhReady?.status, .done)
+
+        XCTAssertNil(GeminiDesktopClassifier.parseSidebarTaskRow("大模型学习路线GitHub仓库推荐，已固定"))
+
+        // 5. Native deep link generation
+        XCTAssertEqual(
+            GeminiDesktopClassifier.deepLinkURL(conversationId: "c_1bfb80c6c2b11224")?.absoluteString,
+            "googlegemini://conversation/c_1bfb80c6c2b11224"
+        )
+    }
+
+    func testT3CodeFastISOParserMatchesFoundationFormatter() throws {
+        let fracFmt = ISO8601DateFormatter()
+        fracFmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let basicFmt = ISO8601DateFormatter()
+        basicFmt.formatOptions = [.withInternetDateTime]
+
+        let samples = [
+            "2026-11-22T18:01:20.410Z",
+            "2024-02-29T23:59:59.999Z",
+            "2026-01-01T00:00:00Z",
+            "2026-11-23T12:30:45+08:00"
+        ]
+        for s in samples {
+            let expected = try XCTUnwrap(fracFmt.date(from: s) ?? basicFmt.date(from: s))
+            let actual = try XCTUnwrap(T3CodeScanner.parseISO(s))
+            XCTAssertEqual(actual.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 0.001, "Mismatch for \(s)")
+        }
+        XCTAssertNil(T3CodeScanner.parseISO(""))
+        XCTAssertNil(T3CodeScanner.parseISO("not-a-date"))
+    }
 }

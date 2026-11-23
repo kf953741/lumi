@@ -190,7 +190,7 @@ final class AgentIconCache {
         case .claude:      return ["com.anthropic.claudefordesktop"]
         case .t3code:      return ["com.t3tools.t3code", "com.t3tools.t3code.dev"]
         case .cursor:      return ["com.todesktop.230313mzl4w4u92"]
-        case .gemini:      return ["com.google.gemini"]
+        case .gemini:      return ["com.google.GeminiMacOS", "com.google.gemini"]
         case .opencode:    return ["ai.opencode.desktop", "dev.opencode.app"]
         }
     }
@@ -432,7 +432,7 @@ struct KnockoutRunningSpinner: View {
             if let fixedPhase {
                 spinnerCanvas(phase: fixedPhase)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
                     let t = timeline.date.timeIntervalSinceReferenceDate
                     let phase = (t / 1.35).truncatingRemainder(dividingBy: 1.0)
                     spinnerCanvas(phase: phase)
@@ -481,33 +481,41 @@ struct TelemetryPulseBars: View {
     var body: some View {
         Group {
             if !active {
-                HStack(alignment: .bottom, spacing: 1.7) {
-                    ForEach(0..<3, id: \.self) { i in
-                        Capsule()
-                            .fill(Color.white.opacity(0.22))
-                            .frame(width: 1.7, height: i == 1 ? 5.5 : 3.5)
-                    }
-                }
-                .frame(height: 8.5, alignment: .bottom)
+                drawBarsCanvas(h0: 3.5, h1: 5.5, h2: 3.5, op0: 0.22, op1: 0.22, op2: 0.22, fill: .white)
             } else if let fixedTime {
                 barsView(time: fixedTime)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 12.0)) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
                     barsView(time: timeline.date.timeIntervalSinceReferenceDate)
                 }
             }
         }
+        .frame(width: 8.6, height: 8.5)
     }
 
     private func barsView(time t: TimeInterval) -> some View {
         let h0 = CGFloat(3.4 + 2.4 * (0.5 + 0.5 * Foundation.sin(t * 3.4)))
         let h1 = CGFloat(5.0 + 3.2 * (0.5 + 0.5 * Foundation.sin(t * 3.4 + 1.3)))
         let h2 = CGFloat(3.6 + 2.8 * (0.5 + 0.5 * Foundation.sin(t * 3.4 + 2.6)))
-        return HStack(alignment: .bottom, spacing: 1.7) {
-            Capsule().fill(color.opacity(0.65)).frame(width: 1.7, height: h0)
-            Capsule().fill(color.opacity(0.95)).frame(width: 1.7, height: h1)
-            Capsule().fill(color.opacity(0.70)).frame(width: 1.7, height: h2)
+        return drawBarsCanvas(h0: h0, h1: h1, h2: h2, op0: 0.65, op1: 0.95, op2: 0.70, fill: color)
+    }
+
+    /// Renders inside a fixed-size Canvas so animating bar heights never invalidates SwiftUI/AppKit window layout.
+    private func drawBarsCanvas(
+        h0: CGFloat, h1: CGFloat, h2: CGFloat,
+        op0: Double, op1: Double, op2: Double,
+        fill: Color
+    ) -> some View {
+        Canvas { ctx, sz in
+            let w: CGFloat = 1.7
+            let gap: CGFloat = 1.7
+            let heights: [(CGFloat, Double)] = [(h0, op0), (h1, op1), (h2, op2)]
+            for (idx, item) in heights.enumerated() {
+                let x = CGFloat(idx) * (w + gap)
+                let h = min(sz.height, max(1.5, item.0))
+                let rect = CGRect(x: x, y: sz.height - h, width: w, height: h)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: w * 0.5), with: .color(fill.opacity(item.1)))
+            }
         }
-        .frame(height: 8.5, alignment: .bottom)
     }
 }

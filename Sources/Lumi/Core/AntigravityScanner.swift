@@ -263,6 +263,8 @@ enum AntigravityAXPromptDetector {
 final class AntigravityScanner: @unchecked Sendable {
     private let dbPath: String
     private var lastKnownSessions: [AgentSession] = []
+    private var lastDBFingerprint: String = ""
+    private var cachedDBPayload: ([DBConversation], [String: String])?
 
     private struct DBConversation {
         let id: String
@@ -511,7 +513,24 @@ final class AntigravityScanner: @unchecked Sendable {
         )
     }
 
+    private func computeDBFingerprint() -> String {
+        var parts: [String] = []
+        for p in [dbPath, dbPath + "-wal"] {
+            var st = stat()
+            if stat(p, &st) == 0 {
+                parts.append("\(st.st_size):\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)")
+            } else {
+                parts.append("none")
+            }
+        }
+        return parts.joined(separator: "|")
+    }
+
     private func loadDBRowsAndParents() -> ([DBConversation], [String: String])? {
+        let fp = computeDBFingerprint()
+        if fp == lastDBFingerprint, let cached = cachedDBPayload {
+            return cached
+        }
         guard let reader = SQLiteReader(path: dbPath) else { return nil }
 
         var parentMap: [String: String] = [:]
@@ -550,6 +569,8 @@ final class AntigravityScanner: @unchecked Sendable {
             ))
         }
         guard ok else { return nil }
+        lastDBFingerprint = fp
+        cachedDBPayload = (rows, parentMap)
         return (rows, parentMap)
     }
 
@@ -565,24 +586,77 @@ final class AntigravityScanner: @unchecked Sendable {
         return trimmed
     }
 
+    /// Lock-free ASCII parser for SQLite ISO timestamps (`YYYY-MM-DD[T ]HH:MM:SS[.ffffff][Z|+HH:MM|-HH:MM]`).
     private func parseSQLiteDate(_ raw: String) -> Date? {
         guard !raw.isEmpty else { return nil }
-        var normalized = raw.replacingOccurrences(of: " ", with: "T")
-        if let dotRange = normalized.range(of: ".") {
-            let afterDot = normalized[dotRange.upperBound...]
-            var tzStart = afterDot.endIndex
-            for idx in afterDot.indices {
-                let ch = afterDot[idx]
-                if ch == "+" || ch == "-" || ch == "Z" {
-                    tzStart = idx
-                    break
+        let bytes = Array(raw.utf8)
+        let n = bytes.count
+        if n >= 19,
+           bytes[4] == 45, bytes[7] == 45, (bytes[10] == 84 || bytes[10] == 32),
+           bytes[13] == 58, bytes[16] == 58 {
+            @inline(__always)
+            func digits(_ i: Int, _ len: Int) -> Int? {
+                guard i + len <= n else { return nil }
+                var v = 0
+                for k in 0..<len {
+                    let c = Int(bytes[i + k]) - 48
+                    if c < 0 || c > 9 { return nil }
+                    v = v * 10 + c
+                }
+                return v
+            }
+            if let year = digits(0, 4),
+               let month = digits(5, 2), month >= 1, month <= 12,
+               let day = digits(8, 2), day >= 1, day <= 31,
+               let hour = digits(11, 2), hour <= 23,
+               let minute = digits(14, 2), minute <= 59,
+               let second = digits(17, 2), second <= 60 {
+                var idx = 19
+                var frac = 0.0
+                if idx < n && bytes[idx] == 46 { // '.'
+                    idx += 1
+                    var scale = 0.1
+                    while idx < n {
+                        let c = Int(bytes[idx]) - 48
+                        if c < 0 || c > 9 { break }
+                        frac += Double(c) * scale
+                        scale *= 0.1
+                        idx += 1
+                    }
+                }
+                var tzOffsetSec = 0
+                var tzOk = true
+                if idx == n || (idx == n - 1 && bytes[idx] == 90) { // bare UTC or 'Z'
+                    tzOffsetSec = 0
+                } else if (bytes[idx] == 43 || bytes[idx] == 45) { // '+' or '-'
+                    let sign = bytes[idx] == 43 ? 1 : -1
+                    idx += 1
+                    if idx + 5 == n && bytes[idx + 2] == 58,
+                       let tzh = digits(idx, 2), let tzm = digits(idx + 3, 2) {
+                        tzOffsetSec = sign * (tzh * 3600 + tzm * 60)
+                    } else if idx + 4 == n,
+                              let tzh = digits(idx, 2), let tzm = digits(idx + 2, 2) {
+                        tzOffsetSec = sign * (tzh * 3600 + tzm * 60)
+                    } else {
+                        tzOk = false
+                    }
+                } else {
+                    tzOk = false
+                }
+                if tzOk {
+                    let y = month <= 2 ? year - 1 : year
+                    let era = (y >= 0 ? y : y - 399) / 400
+                    let yoe = y - era * 400
+                    let mAdj = month + (month > 2 ? -3 : 9)
+                    let doy = (153 * mAdj + 2) / 5 + day - 1
+                    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+                    let days = era * 146097 + doe - 719468
+                    let secs = Double(days * 86400 + hour * 3600 + minute * 60 + second - tzOffsetSec) + frac
+                    return Date(timeIntervalSince1970: secs)
                 }
             }
-            let frac = String(afterDot[..<tzStart])
-            let tz = String(afterDot[tzStart...])
-            let frac3 = String(frac.prefix(3)).padding(toLength: 3, withPad: "0", startingAt: 0)
-            normalized = String(normalized[..<dotRange.lowerBound]) + "." + frac3 + tz
         }
+        let normalized = raw.replacingOccurrences(of: " ", with: "T")
         if let d = isoFracFormatter.date(from: normalized) { return d }
         return isoBasicFormatter.date(from: normalized)
     }

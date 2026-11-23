@@ -23,11 +23,11 @@ struct LumiMascotView: View {
         case .celebrating, .poked, .dizzy:
             return 1.0 / 30.0
         case .working, .error, .needsInput:
-            return isActiveSurface ? (1.0 / 24.0) : (1.0 / 5.0)
+            return isActiveSurface ? (1.0 / 30.0) : (1.0 / 24.0)
         case .waitingUnread:
-            return isActiveSurface ? (1.0 / 15.0) : (1.0 / 2.0)
+            return isActiveSurface ? (1.0 / 24.0) : (1.0 / 12.0)
         case .sleeping:
-            return isActiveSurface ? (1.0 / 10.0) : 1.0
+            return isActiveSurface ? (1.0 / 12.0) : (1.0 / 2.0)
         }
     }
 
@@ -382,12 +382,33 @@ struct LumiMascotView: View {
         )
         ctx.stroke(frown, with: .color(inkColor), style: StrokeStyle(lineWidth: max(1.4, bw * 0.032), lineCap: .round))
 
-        // Crisp cool-grey `{ }` code braces right beside its squinting eyes!
+        // Crisp cool-grey `{ }` code braces drawn as pure vectors (avoids per-frame CoreText/ICU shaping)
         let braceAlpha = 0.74 + 0.24 * Foundation.sin(t * 4.5)
-        let braceText = Text("{ }")
-            .font(.system(size: max(10, s * 0.22), weight: .semibold, design: .rounded))
-            .foregroundColor(Color(red: 0.62, green: 0.65, blue: 0.70).opacity(braceAlpha))
-        ctx.draw(braceText, at: CGPoint(x: rect.maxX + s * 0.135, y: rect.minY + bh * 0.56))
+        let braceColor = Color(red: 0.62, green: 0.65, blue: 0.70).opacity(braceAlpha)
+        let bcx = rect.maxX + s * 0.135
+        let bcy = rect.minY + bh * 0.56
+        let bhHalf = s * 0.088
+        let bwGap = s * 0.056
+        let curl = s * 0.036
+        let braceStyle = StrokeStyle(lineWidth: max(1.3, s * 0.032), lineCap: .round, lineJoin: .round)
+
+        var leftBrace = Path()
+        let lx = bcx - bwGap
+        leftBrace.move(to: CGPoint(x: lx + curl, y: bcy - bhHalf))
+        leftBrace.addQuadCurve(to: CGPoint(x: lx, y: bcy - bhHalf * 0.45), control: CGPoint(x: lx, y: bcy - bhHalf))
+        leftBrace.addQuadCurve(to: CGPoint(x: lx - curl * 0.75, y: bcy), control: CGPoint(x: lx, y: bcy - bhHalf * 0.12))
+        leftBrace.addQuadCurve(to: CGPoint(x: lx, y: bcy + bhHalf * 0.45), control: CGPoint(x: lx, y: bcy + bhHalf * 0.12))
+        leftBrace.addQuadCurve(to: CGPoint(x: lx + curl, y: bcy + bhHalf), control: CGPoint(x: lx, y: bcy + bhHalf))
+        ctx.stroke(leftBrace, with: .color(braceColor), style: braceStyle)
+
+        var rightBrace = Path()
+        let rx = bcx + bwGap
+        rightBrace.move(to: CGPoint(x: rx - curl, y: bcy - bhHalf))
+        rightBrace.addQuadCurve(to: CGPoint(x: rx, y: bcy - bhHalf * 0.45), control: CGPoint(x: rx, y: bcy - bhHalf))
+        rightBrace.addQuadCurve(to: CGPoint(x: rx + curl * 0.75, y: bcy), control: CGPoint(x: rx, y: bcy - bhHalf * 0.12))
+        rightBrace.addQuadCurve(to: CGPoint(x: rx, y: bcy + bhHalf * 0.45), control: CGPoint(x: rx, y: bcy + bhHalf * 0.12))
+        rightBrace.addQuadCurve(to: CGPoint(x: rx - curl, y: bcy + bhHalf), control: CGPoint(x: rx, y: bcy + bhHalf))
+        ctx.stroke(rightBrace, with: .color(braceColor), style: braceStyle)
     }
 
     // MARK: - 4. Celebrating Pose (Joyful Airborne Jump + Huge Open Grin + 7 Geometric Confetti)

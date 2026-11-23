@@ -33,7 +33,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude: return "Claude Code"
         case .t3code: return "T3 Code"
         case .cursor: return "Cursor"
-        case .gemini: return "Gemini CLI"
+        case .gemini: return "Gemini"
         case .opencode: return "OpenCode"
         }
     }
@@ -57,7 +57,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude:      return ["com.anthropic.claudefordesktop", "com.microsoft.VSCode", "com.googlecode.iterm2", "com.apple.Terminal"]
         case .t3code:      return ["com.t3tools.t3code", "com.t3tools.t3code.dev"]
         case .cursor:      return ["com.todesktop.230313mzl4w4u92"]
-        case .gemini:      return ["com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal"]
+        case .gemini:      return ["com.google.GeminiMacOS", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal"]
         case .opencode:    return ["com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.apple.Terminal"]
         }
     }
@@ -69,7 +69,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude:      return "~/.claude/settings.json（+ 自动读取本地会话）"
         case .t3code:      return "~/.t3/userdata/statev2.sqlite（免配置自动监听）"
         case .cursor:      return "~/.cursor/hooks.json"
-        case .gemini:      return "~/.gemini/settings.json"
+        case .gemini:      return "~/.gemini/settings.json（+ 自动追踪桌面版 Gemini.app）"
         case .opencode:    return "~/.config/opencode/plugins/lumi.js"
         }
     }
@@ -81,7 +81,7 @@ public enum AgentKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .claude:      return "~/.claude/settings.json (+ zero-config session watch)"
         case .t3code:      return "~/.t3/userdata/statev2.sqlite (zero-config auto DB watch)"
         case .cursor:      return "~/.cursor/hooks.json"
-        case .gemini:      return "~/.gemini/settings.json"
+        case .gemini:      return "~/.gemini/settings.json (+ auto Gemini Desktop watch)"
         case .opencode:    return "~/.config/opencode/plugins/lumi.js"
         }
     }

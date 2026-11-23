@@ -6,7 +6,7 @@
 
 **A glowing Dynamic Notch & Desktop Mission Control for your AI coding agents on macOS.**
 
-*Antigravity · Codex (Desktop & CLI) · Claude Code · T3 Code · Cursor · Gemini CLI · OpenCode*
+*Antigravity · Codex (Desktop & CLI) · Claude Code · T3 Code · Gemini (Desktop & CLI) · Cursor · OpenCode*
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -41,8 +41,8 @@ When you run 5–10 AI coding conversations in parallel across **Antigravity**, 
 | **Exact Conversation Jump** | Only brings the app to front | **Direct thread navigation** — native `codex://threads/<id>` & `t3code://threads/<env>/<id>` deep links + official `Cmd+K` search palette jump for Antigravity (clipboard-safe) |
 | **Dual Form Factor** | Notch-only or window-only | **Dynamic Notch Island ↔ 1-Click Floating Desktop Board** — collapsed notch ears show 6 expressive Lumi Ember micro-states, stacked native app icons, live solo `MM:SS` timer / `? Reply` badge, and auto-narrow when idle; auto-adapts to non-notch displays |
 | **Subagent & Noise Hygiene** | Subagents & CLI jobs flood the list | Rolls active subagents into **`+N` badges** on the parent dialog; separates standalone chats from headless CLI runs; deduplicates underlying Codex/Claude/Antigravity runs launched inside T3 Code; 4.5s settle debounce prevents premature finish popups |
-| **Zero-Config + Hooks** | Manual JSON editing required | **Out-of-the-box local watch** for Antigravity, Codex (Desktop & CLI), Claude Code, and **T3 Code** + **1-click Hook Installer** (with automatic backup) across 7 AI coding tools |
-| **Approval / Needs-Input Alerts** | Silent when agent blocks on a prompt | **Instant `Needs Input` priority section + `?` mascot alert** when Claude, Codex, Antigravity, or T3 Code pauses for approval or a question |
+| **Zero-Config + Hooks** | Manual JSON editing required | **Out-of-the-box local watch** for Antigravity, Codex (Desktop & CLI), Claude Code, **T3 Code**, and **Gemini Desktop (`Gemini.app`)** + **1-click Hook Installer** (with automatic backup) across 7 AI tools |
+| **Approval / Needs-Input Alerts** | Silent when agent blocks on a prompt | **Instant `Needs Input` priority section + `?` mascot alert** when Claude, Codex, Antigravity, T3 Code, or Gemini Desktop pauses for approval or a question |
 | **Bilingual & Controls** | Single-language, mouse-only | **Live English / 中文 hot-switch**, global toggle hotkey (`⌥L` + `Esc`), fullscreen auto-peek guard, **Morning Oat Light** floating theme, 1-click DND mute, and manual update check |
 | **Original Vector Mascot** | Static icon or 60 fps CPU burn | **Lumi Ember** — warm Californian editorial luminous bean drawn in pure SwiftUI `Canvas` with goofy asymmetric eyes, `{ }` coding squint, `?` approval cue, joyful confetti jumps, slumped `Zzz` sleep & dizzy easter egg — **adaptive FPS (< 2% idle CPU)** |
 
@@ -81,7 +81,7 @@ Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF blo
 
 ### 3. Zero-Config Local Watch + 1-Click Hook Installer
 
-**Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, and **T3 Code** work immediately with zero configuration. Want real-time per-tool actions (`Editing ShadowPass.ts`, `Running swift test`) or want to add **Cursor**, **Gemini CLI**, and **OpenCode**? Open **Settings → AI Agents** and click **Install** — Lumi always creates a timestamped backup before touching any config file.
+**Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, **T3 Code**, and **Gemini Desktop (`Gemini.app`)** work immediately with zero configuration. Want real-time per-tool actions (`Editing ShadowPass.ts`, `Running swift test`) or want to add **Cursor**, **Gemini CLI**, and **OpenCode**? Open **Settings → AI Agents** and click **Install** — Lumi always creates a timestamped backup before touching any config file.
 
 <div align="center">
   <img src="docs/assets/settings-hooks.png" width="90%" alt="Lumi Settings and One-Click Hook Installer" />
@@ -93,8 +93,8 @@ Lumi Ember is drawn entirely with lineless vector SwiftUI `Canvas` (zero GIF blo
 | **OpenAI Codex** (Desktop & CLI) | Yes | Yes (`~/.codex/hooks.json`) | Yes | Yes | Native `codex://` |
 | **Claude Code** | Yes | Yes (`~/.claude/settings.json`) | Yes | Yes | App Focus |
 | **T3 Code** | Yes (`~/.t3/userdata/statev2.sqlite`) | Not needed (auto DB watch & dedupe) | Yes | Yes | Native `t3code://` |
+| **Google Gemini** (Desktop & CLI) | Yes (`Gemini.app` AX + `ChatInfo2.store`) | Yes (`~/.gemini/settings.json` for CLI) | Yes | Sidebar tasks | Window / Sidebar / `googlegemini://` |
 | **Cursor** | — | Yes (`~/.cursor/hooks.json`) | Hook prompt | — | App Focus |
-| **Gemini CLI** | — | Yes (`~/.gemini/settings.json`) | Hook prompt | — | Terminal Focus |
 | **OpenCode** | — | Yes (`~/.config/opencode/plugins/lumi.js`) | Hook prompt | — | Terminal Focus |
 
 ---
@@ -149,13 +149,14 @@ open -a /Applications/Lumi.app
 - **Quick Menu, DND & Language**: Right-click the warm-orange menu bar Lumi Ember icon to switch modes, enable **Do Not Disturb (30 min / 1 hr)**, hot-switch **English / 简体中文** without restarting, mark all read, open Settings, or **Quit Lumi** (`⌘Q`).
 
 ### 2. Connecting AI Coding Agents
-1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, and **T3 Code** are tracked automatically with zero setup (including smart deduplication when T3 Code runs Codex, Claude, or Antigravity underneath).
+1. Launch **Lumi** — **Antigravity**, **Codex (Desktop & CLI)**, **Claude Code**, **T3 Code**, and **Gemini Desktop (`Gemini.app`)** are tracked automatically with zero setup (including smart deduplication when T3 Code runs Codex, Claude, or Antigravity underneath).
 2. Open **Settings (⚙️) → AI Agents** to enable 1-click Hooks:
    - Installs a fast, atomic Python relay to `~/.lumi/lumi-hook.py` (< 10 ms, never blocks your agent).
    - Automatically backs up existing hook files (`*.bak-<timestamp>`) before writing and removes only Lumi's entry on uninstall.
 
 ### 3. Enabling Click-to-Jump
 - **Codex** (`codex://threads/<id>`) and **T3 Code** (`t3code://threads/<environmentId>/<threadId>`) support native deep links out of the box — clicking any card or macOS notification jumps straight to the exact thread with zero permissions needed.
+- **Gemini Desktop (`Gemini.app`)** raises the matching chat window, selects the sidebar thread, or opens `googlegemini://conversation/<id>`.
 - **Antigravity** does not yet expose a conversation-ID URL scheme, so Lumi navigates cleanly via Antigravity's official **`⌘K` Search Conversations** palette (preserving & restoring your clipboard automatically).
 - To enable this: open **Settings → AI Agents → Grant Permission**, and allow **Lumi** in **System Settings → Privacy & Security → Accessibility**.
 - *Tip:* If you rebuild Lumi locally with an ad-hoc signature, remove the old Lumi entry (`-`) and re-add `/Applications/Lumi.app` (`+`) once. Building with a Developer ID certificate keeps Accessibility authorization intact across rebuilds automatically.
@@ -181,7 +182,8 @@ flowchart LR
     Codex["Codex Desktop & CLI\nSQLite + 256KB Tail"] --> Store
     Claude["Claude Code\nTranscripts + Hooks"] --> Store
     T3["T3 Code\nstatev2.sqlite WAL + Dedupe"] --> Store
-    Extra["Cursor / Gemini / OpenCode\n~/.lumi/live/*.json"] --> Store
+    Gemini["Gemini Desktop\nBatched AX + ChatInfo2.store"] --> Store
+    Extra["Cursor / Gemini CLI / OpenCode\n~/.lumi/live/*.json"] --> Store
 
     Store["MonitorStore\nState Machine · 4.5s Debounce\nPersistent Read Inbox"] --> Notch["Dynamic Notch Island\nNotchOverlayPanel"]
     Store --> Float["Floating Desktop Board\nStudioBentoBoardView"]
@@ -192,7 +194,7 @@ flowchart LR
 ```text
 Sources/Lumi/
 ├── App/         # AppDelegate, Menu Bar status item, NotchWindowController (hardware notch geometry)
-├── Core/        # Antigravity, Codex, Claude, T3Code, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
+├── Core/        # Antigravity, Codex, Claude, T3Code, GeminiDesktop, Extra scanners, SQLiteReader, HookInstaller, MonitorStore
 ├── Mascot/      # LumiMascotView (Lumi Ember SwiftUI Canvas mascot with adaptive FPS & cursor gaze)
 ├── Models/      # AgentModels, smart ProjectNameHelper, ToolActionFormatter
 └── UI/          # NotchIslandView, FloatingBoardView, StudioBentoBoardView, SessionCardView, SettingsView

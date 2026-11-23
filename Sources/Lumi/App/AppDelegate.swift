@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.notchController.collapseAfterJump()
                     return nil
                 } else if self.store.displayMode == .floating && self.floatingPanel.isKeyWindow {
-                    self.floatingPanel.orderOut(nil)
+                    self.hideFloatingPanel()
                     return nil
                 }
             }
@@ -157,7 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if store.displayMode == .notch {
             notchController.toggleExpanded()
         } else if floatingPanel.isVisible {
-            floatingPanel.orderOut(nil)
+            hideFloatingPanel()
         } else {
             showFloatingPanel(activate: true)
         }
@@ -373,7 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func applyDisplayMode(_ mode: DisplayMode) {
         switch mode {
         case .notch:
-            floatingPanel.orderOut(nil)
+            hideFloatingPanel()
             notchController.show()
         case .floating:
             notchController.hide()
@@ -406,14 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         floatingPanel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         floatingPanel.standardWindowButton(.zoomButton)?.isHidden = true
 
-        let hosting = NSHostingView(rootView: FloatingBoardView(
-            store: store,
-            onDockToNotch: { [weak self] in self?.switchMode(.notch) },
-            onOpenSettings: { [weak self] in self?.openSettings() },
-            onHide: { [weak self] in self?.floatingPanel.orderOut(nil) }
-        ))
-        floatingPanel.contentView = hosting
-
+        // Keep contentView unmounted while hidden so SwiftUI TimelineViews never run off-screen.
         let restored = floatingPanel.setFrameUsingName("LumiFloatingBoardFrame")
         floatingPanel.setFrameAutosaveName("LumiFloatingBoardFrame")
         if !restored, let screen = NSScreen.main?.visibleFrame {
@@ -423,7 +416,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    private func hideFloatingPanel() {
+        floatingPanel.orderOut(nil)
+        floatingPanel.contentView = nil
+    }
+
     private func showFloatingPanel(activate: Bool) {
+        if floatingPanel.contentView == nil {
+            let hosting = NSHostingView(rootView: FloatingBoardView(
+                store: store,
+                onDockToNotch: { [weak self] in self?.switchMode(.notch) },
+                onOpenSettings: { [weak self] in self?.openSettings() },
+                onHide: { [weak self] in self?.hideFloatingPanel() }
+            ))
+            floatingPanel.contentView = hosting
+        }
         store.refreshNow()
         floatingPanel.level = store.alwaysOnTop ? .floating : .normal
         if activate {

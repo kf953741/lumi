@@ -50,6 +50,40 @@ final class T3CodeScanner: @unchecked Sendable {
     private let environmentIdPath: String
     private let isT3RunningCheck: @Sendable () -> Bool
 
+    private let cacheLock = NSLock()
+    private var lastFingerprint: DBFingerprint?
+    private var lastScanAt: Date = .distantPast
+    private var lastScanLookback: Double = 0
+    private var lastScanHadActive: Bool = false
+    private var cachedScanResult: T3CodeScanResult?
+    private var terminalRunDetailCache: [String: V2RunDetail] = [:]
+
+    private struct DBFingerprint: Equatable {
+        let v2: FileStamp
+        let v2Wal: FileStamp
+        let v1: FileStamp
+        let v1Wal: FileStamp
+        let appRunning: Bool
+    }
+
+    private struct FileStamp: Equatable {
+        let size: Int64
+        let mtimeSec: Int
+        let mtimeNsec: Int
+
+        static func read(_ path: String) -> FileStamp {
+            var st = stat()
+            guard stat(path, &st) == 0 else {
+                return FileStamp(size: -1, mtimeSec: 0, mtimeNsec: 0)
+            }
+            return FileStamp(
+                size: st.st_size,
+                mtimeSec: st.st_mtimespec.tv_sec,
+                mtimeNsec: st.st_mtimespec.tv_nsec
+            )
+        }
+    }
+
     private static let pathSegmentAllowedCharacters: CharacterSet = {
         var set = CharacterSet.alphanumerics
         set.insert(charactersIn: "-_.~")
@@ -131,13 +165,35 @@ final class T3CodeScanner: @unchecked Sendable {
     }
 
     func scanDetailed(lookbackHours: Double = 24, now: Date = Date()) -> T3CodeScanResult {
+        let appRunning = isT3RunningCheck()
+        let fp = DBFingerprint(
+            v2: FileStamp.read(v2DbPath),
+            v2Wal: FileStamp.read(v2DbPath + "-wal"),
+            v1: FileStamp.read(v1DbPath),
+            v1Wal: FileStamp.read(v1DbPath + "-wal"),
+            appRunning: appRunning
+        )
+
+        cacheLock.lock()
+        if let cached = cachedScanResult,
+           lastFingerprint == fp,
+           lastScanLookback == lookbackHours {
+            let age = abs(now.timeIntervalSince(lastScanAt))
+            let maxAge: TimeInterval = lastScanHadActive ? 12.0 : 45.0
+            if age < maxAge {
+                cacheLock.unlock()
+                return cached
+            }
+        }
+        cacheLock.unlock()
+
         var results: [AgentSession] = []
         var seenThreadIds = Set<String>()
         var ownedNativeIds = Set<String>()
         var pendingMatches: [T3PendingMatch] = []
 
         if let v2 = SQLiteReader(path: v2DbPath) {
-            let v2Res = scanV2(reader: v2, lookbackHours: lookbackHours, now: now)
+            let v2Res = scanV2(reader: v2, lookbackHours: lookbackHours, now: now, appRunning: appRunning)
             for s in v2Res.sessions {
                 seenThreadIds.insert(s.rawId)
                 results.append(s)
@@ -151,11 +207,20 @@ final class T3CodeScanner: @unchecked Sendable {
             results.append(contentsOf: v1Sessions)
         }
 
-        return T3CodeScanResult(
+        let finalResult = T3CodeScanResult(
             sessions: results,
             ownedNativeSessionIds: ownedNativeIds,
             pendingMatches: pendingMatches
         )
+        let hasActive = results.contains { $0.status == .running || $0.status == .needsInput }
+        cacheLock.lock()
+        lastFingerprint = fp
+        lastScanAt = now
+        lastScanLookback = lookbackHours
+        lastScanHadActive = hasActive
+        cachedScanResult = finalResult
+        cacheLock.unlock()
+        return finalResult
     }
 
     // MARK: - Orchestration v2 (statev2.sqlite)
@@ -195,9 +260,8 @@ final class T3CodeScanner: @unchecked Sendable {
         var latestActivityAt: Date?
     }
 
-    private func scanV2(reader: SQLiteReader, lookbackHours: Double, now: Date) -> T3CodeScanResult {
+    private func scanV2(reader: SQLiteReader, lookbackHours: Double, now: Date, appRunning: Bool) -> T3CodeScanResult {
         let cutoff = now.addingTimeInterval(-lookbackHours * 3600)
-        let appRunning = isT3RunningCheck()
 
         // 1. Projects map
         var projects: [String: V2Project] = [:]
@@ -294,13 +358,31 @@ final class T3CodeScanner: @unchecked Sendable {
             rootThreads.append(th)
         }
 
-        // 5. Inspect nodes & turn items only for recent or active runs (keeps idle scan near 0% CPU)
+        // 5. Inspect nodes & turn items only for recent or active runs (caching terminal completed runs)
         var runDetails: [String: V2RunDetail] = [:]
         for th in rootThreads {
             guard let run = latestRuns[th.threadId] else { continue }
             let isPotentiallyActive = Self.isActiveRunStatus(run.status) || Self.isWaitingRunStatus(run.status) || runningRuntimeThreads.contains(th.threadId)
             guard isPotentiallyActive || th.updatedAt >= cutoff else { continue }
-            runDetails[run.runId] = inspectV2Run(reader: reader, runId: run.runId)
+            if !isPotentiallyActive {
+                cacheLock.lock()
+                let cached = terminalRunDetailCache[run.runId]
+                cacheLock.unlock()
+                if let cached {
+                    runDetails[run.runId] = cached
+                    continue
+                }
+            }
+            let detail = inspectV2Run(reader: reader, runId: run.runId)
+            runDetails[run.runId] = detail
+            if !isPotentiallyActive && !detail.hasPendingApproval {
+                cacheLock.lock()
+                if terminalRunDetailCache.count >= 120 {
+                    terminalRunDetailCache.removeAll(keepingCapacity: true)
+                }
+                terminalRunDetailCache[run.runId] = detail
+                cacheLock.unlock()
+            }
         }
 
         // 5b. Map T3-owned threads to their underlying provider native session IDs
@@ -700,8 +782,59 @@ final class T3CodeScanner: @unchecked Sendable {
         return obj
     }
 
-    private static func parseISO(_ raw: String) -> Date? {
+    /// Lock-free ASCII UTC ISO-8601 parser (`YYYY-MM-DDTHH:MM:SS[.fff]Z`), ~300x faster than
+    /// Foundation's `ISO8601DateFormatter`, with automatic fallback for non-`Z` timezone offsets.
+    static func parseISO(_ raw: String) -> Date? {
         guard !raw.isEmpty else { return nil }
+        let bytes = Array(raw.utf8)
+        let n = bytes.count
+        if n >= 20,
+           bytes[4] == 45, bytes[7] == 45, (bytes[10] == 84 || bytes[10] == 32),
+           bytes[13] == 58, bytes[16] == 58,
+           bytes[n - 1] == 90 { // 'Z'
+            @inline(__always)
+            func digits(_ i: Int, _ len: Int) -> Int? {
+                var v = 0
+                for k in 0..<len {
+                    let c = Int(bytes[i + k]) - 48
+                    if c < 0 || c > 9 { return nil }
+                    v = v * 10 + c
+                }
+                return v
+            }
+            if let year = digits(0, 4),
+               let month = digits(5, 2), month >= 1, month <= 12,
+               let day = digits(8, 2), day >= 1, day <= 31,
+               let hour = digits(11, 2), hour <= 23,
+               let minute = digits(14, 2), minute <= 59,
+               let second = digits(17, 2), second <= 60 {
+                var frac = 0.0
+                if n > 20 {
+                    if bytes[19] != 46 { // '.'
+                        return isoFracFormatter.date(from: raw) ?? isoBasicFormatter.date(from: raw)
+                    }
+                    var scale = 0.1
+                    for idx in 20..<(n - 1) {
+                        let c = Int(bytes[idx]) - 48
+                        if c < 0 || c > 9 {
+                            return isoFracFormatter.date(from: raw) ?? isoBasicFormatter.date(from: raw)
+                        }
+                        frac += Double(c) * scale
+                        scale *= 0.1
+                    }
+                }
+                // Howard Hinnant's civil-to-days algorithm (days since 1970-01-01)
+                let y = month <= 2 ? year - 1 : year
+                let era = (y >= 0 ? y : y - 399) / 400
+                let yoe = y - era * 400
+                let mAdj = month + (month > 2 ? -3 : 9)
+                let doy = (153 * mAdj + 2) / 5 + day - 1
+                let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+                let days = era * 146097 + doe - 719468
+                let secs = Double(days * 86400 + hour * 3600 + minute * 60 + second) + frac
+                return Date(timeIntervalSince1970: secs)
+            }
+        }
         return isoFracFormatter.date(from: raw) ?? isoBasicFormatter.date(from: raw)
     }
 

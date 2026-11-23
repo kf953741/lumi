@@ -262,8 +262,8 @@ public struct L10n: Sendable {
     public var agentsHeaderTitle: String { isEnglish ? "One-Click AI Agent Integration" : "一键接入 AI 编程工具" }
     public var agentsHeaderDesc: String {
         isEnglish
-            ? "Antigravity, Codex, Claude Code, and T3 Code work zero-config out of the box. Install Hooks for live tool actions, approval alerts, and extra agents (original configs are backed up automatically)."
-            : "Antigravity、Codex、Claude Code 与 T3 Code 开箱自动读取本地会话；安装 Hook 后可实时精准显示当前工具动作与审批提醒（自动备份原配置）。"
+            ? "Antigravity, Codex, Claude Code, T3 Code, and Gemini Desktop work zero-config out of the box. Install Hooks for live tool actions, approval alerts, and extra CLI agents (original configs are backed up automatically)."
+            : "Antigravity、Codex、Claude Code、T3 Code 与桌面版 Gemini 开箱自动监听；安装 Hook 后可实时精准显示 CLI/工具动作与审批提醒（自动备份原配置）。"
     }
     public var btnRefreshStatus: String { isEnglish ? "Refresh" : "刷新状态" }
     public var axBannerTitle: String { isEnglish ? "Antigravity Exact-Conversation Click-to-Jump" : "Antigravity 点击卡片精准直达具体对话" }
@@ -313,13 +313,18 @@ public struct L10n: Sendable {
             "输出回复中…": "Writing response…",
             "收尾确认中…": "Settling…",
             "后台任务运行中…": "Background task running…",
+            "后台任务进行中…": "Background task running…",
+            "生成回答中…": "Generating response…",
+            "执行桌面任务中…": "Running desktop task…",
             "等待后台任务/子 Agent 完成…": "Waiting for subagents…",
             "执行中…": "Running…",
             "执行工具中…": "Running tool…",
             "已完成": "Completed",
+            "任务已完成": "Task completed",
             "执行出错": "Execution failed",
             "已手动停止": "Stopped by user",
             "等待你确认/回答": "Waiting for your reply",
+            "需要你的确认或协助": "Needs your attention",
             "等待你的审批或回复": "Waiting for approval",
             "等待审批": "Waiting for approval",
             "读取文件": "Reading file",
@@ -371,7 +376,9 @@ public struct L10n: Sendable {
     }
 
     public func project(_ raw: String) -> String {
-        if isEnglish && raw == "全局" { return "Global" }
+        guard isEnglish else { return raw }
+        if raw == "全局" { return "Global" }
+        if raw == "Gemini 桌面版" { return "Gemini Desktop" }
         return raw
     }
 }

@@ -363,7 +363,7 @@ struct SettingsView: View {
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 1.5)
                                             .background(Capsule().fill(Color.green.opacity(0.15)))
-                                    } else if kind == .antigravity || kind == .codex || kind == .claude {
+                                    } else if kind == .antigravity || kind == .codex || kind == .claude || kind == .gemini {
                                         Text(t.autoWatchReady)
                                             .font(.system(size: 10, weight: .medium))
                                             .foregroundColor(.secondary)

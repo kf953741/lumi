@@ -58,6 +58,8 @@ final class NotchWindowController: ObservableObject {
     @Published var notchHeight: CGFloat = 32
 
     private var panel: NotchOverlayPanel!
+    private var containerView: NotchTrackingHostView!
+    private var hostingView: NSView?
     private let store: MonitorStore
     private let onPopOutFloating: () -> Void
     private let onOpenSettings: () -> Void
@@ -79,6 +81,9 @@ final class NotchWindowController: ObservableObject {
     }
 
     func show() {
+        if hostingView == nil {
+            mountRootView(in: containerView)
+        }
         recomputeScreenGeometry(animated: false)
         panel.orderFrontRegardless()
     }
@@ -89,6 +94,8 @@ final class NotchWindowController: ObservableObject {
         isExpanded = false
         isPinnedOpen = false
         panel.orderOut(nil)
+        hostingView?.removeFromSuperview()
+        hostingView = nil
     }
 
     func toggleExpanded() {
@@ -202,8 +209,8 @@ final class NotchWindowController: ObservableObject {
         container.onMouseExited = { [weak self] in self?.handleMouseExited() }
         container.onMouseMoved = { [weak self] pt, sz in self?.handleMouseMoved(pt, in: sz) }
 
+        containerView = container
         panel.contentView = container
-        mountRootView(in: container)
     }
 
     private func mountRootView(in container: NSView) {
@@ -219,6 +226,7 @@ final class NotchWindowController: ObservableObject {
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
+        hostingView = hosting
     }
 
     private func setExpanded(_ expanded: Bool) {

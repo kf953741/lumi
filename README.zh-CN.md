@@ -6,7 +6,7 @@
 
 **驻留在 MacBook 刘海灵动岛与桌面的 AI 编程 Agent 可视化盯盘中心。**
 
-*支持 Antigravity · Codex（桌面版与 CLI）· Claude Code · T3 Code · Cursor · Gemini CLI · OpenCode*
+*支持 Antigravity · Codex（桌面版与 CLI）· Claude Code · T3 Code · Gemini（桌面版与 CLI）· Cursor · OpenCode*
 
 [English](README.md) · **简体中文**
 
@@ -41,8 +41,8 @@
 | **精准直达对话** | 只切回 App 主窗口 | **直达具体会话**：Codex（`codex://threads/<id>`）与 **T3 Code**（`t3code://threads/<env>/<id>`）支持原生深链秒切，Antigravity 通过官方 `⌘K` 对话搜索精准切入（不破坏剪贴板） |
 | **双形态无缝切换** | 仅刘海或仅小窗 | **刘海灵动岛 ↔ 一键桌面悬浮看板**：收起态即呈现 6 种高对比度小豆豆微表情、叠放原生应用小图标、单任务实时 `MM:SS` 计时器 / `? 确认` 提示并在空闲时自动缩窄；外接非刘海屏自动切换悬浮胶囊 |
 | **子 Agent 折叠与防误报** | 子 Agent、CLI 批处理疯狂刷屏 | 自动把活跃子 Agent 折叠成父对话上的 **`+N` 徽标**，自动去重 T3 Code 托管的底层 Codex/Claude/Antigravity 会话，默认隐藏后台 CLI 批处理，内置 4.5 秒收尾防抖杜绝中途误报 |
-| **开箱即用 + 一键 Hook** | 必须手改多份配置文件 | **Antigravity / Codex（桌面版与 CLI）/ Claude Code / T3 Code 零配置自动发现** + 设置页一键接入/卸载 Hook（自动备份原配置），原生覆盖 7 大 AI 工具 |
-| **等待审批 / 卡住强提醒** | 后台弹出权限确认完全无感知 | **即时捕捉 `等待审批或回复` 状态**：Claude / Codex / Antigravity / T3 Code 任一端卡在审批或提问时置顶亮标 + Lumi Ember 焦急 `?` 提示，绝不让你在后台白等 20 分钟 |
+| **开箱即用 + 一键 Hook** | 必须手改多份配置文件 | **Antigravity / Codex（桌面版与 CLI）/ Claude Code / T3 Code / 桌面版 Gemini（`Gemini.app`）零配置自动发现** + 设置页一键接入/卸载 Hook（自动备份原配置），原生覆盖 7 大 AI 工具 |
+| **等待审批 / 卡住强提醒** | 后台弹出权限确认完全无感知 | **即时捕捉 `等待审批或回复` 状态**：Claude / Codex / Antigravity / T3 Code / 桌面版 Gemini 任一端卡在审批或提问时置顶亮标 + Lumi Ember 焦急 `?` 提示，绝不让你在后台白等 20 分钟 |
 | **中英双语与极客交互** | 单语硬编码、纯鼠标操作 | **简体中文 / English 实时热切换**（跟随系统默认）、全局快捷键 **`⌥L` + `Esc`**、全屏防打扰、悬浮窗**晨光燕麦浅色**、一键勿扰静音与手动检查更新 |
 | **原创动态矢量萌宠** | 静态图标或 60fps 常驻费电 | **原创暖橘萌宠 Lumi Ember**：不对称戏精大眼、干活死死眯眼盯 `{ }`、等审批冒 `?` 招手、完工咧嘴憨笑弹起抛几何彩纸、空闲歪倒摊平半闭眼冒 `Zzz`、连戳 4 下转晕，**自适应帧率（空闲 CPU < 2%）** |
 
@@ -81,7 +81,7 @@
 
 ### 3. 开箱即用 + 7 大 AI 工具原生支持
 
-**Antigravity**、**Codex（桌面版 & CLI）**、**Claude Code** 与 **T3 Code** 无需任何配置打开即追踪。在 **设置 → AI 工具接入** 中点一下按钮即可挂载 Hook，获取实时工具动作并支持 **Cursor**、**Gemini CLI**、**OpenCode**（写入前自动创建带时间戳的原配置备份）。
+**Antigravity**、**Codex（桌面版 & CLI）**、**Claude Code**、**T3 Code** 与 **桌面版 Gemini（`Gemini.app`）** 无需任何配置打开即追踪。在 **设置 → AI 工具接入** 中点一下按钮即可挂载 Hook，获取实时工具动作并支持 **Cursor**、**Gemini CLI**、**OpenCode**（写入前自动创建带时间戳的原配置备份）。
 
 <div align="center">
   <img src="docs/assets/settings-hooks.png" width="90%" alt="Lumi 设置页与一键 Hook 接入" />
@@ -93,8 +93,8 @@
 | **OpenAI Codex**（桌面版 & CLI） | 支持 | 支持（`~/.codex/hooks.json`） | 支持 | 支持 | 原生 `codex://` 深链 |
 | **Claude Code** | 支持 | 支持（`~/.claude/settings.json`） | 支持 | 支持 | 切回应用窗口 |
 | **T3 Code** | 支持（`~/.t3/userdata/statev2.sqlite`） | 免配置自动监听与底层去重 | 支持 | 支持 | 原生 `t3code://` 深链 |
+| **Google Gemini**（桌面版 & CLI） | 支持（`Gemini.app` AX + `ChatInfo2.store`） | 支持（CLI：`~/.gemini/settings.json`） | 支持 | 边栏任务追踪 | 切窗 / 边栏点选 / `googlegemini://` |
 | **Cursor** | — | 支持（`~/.cursor/hooks.json`） | Hook 提示词 | — | 切回应用窗口 |
-| **Gemini CLI** | — | 支持（`~/.gemini/settings.json`） | Hook 提示词 | — | 切回终端 |
 | **OpenCode** | — | 支持（`~/.config/opencode/plugins/lumi.js`） | Hook 提示词 | — | 切回终端 |
 
 ---
@@ -149,13 +149,14 @@ open -a /Applications/Lumi.app
 - **右键菜单、勿扰与双语切换**：右键点击顶部菜单栏 Lumi 图标可快速切换形态、开启**勿扰静音（30 分钟 / 1 小时）**、**热切换简体中文 / English**、全部已读、打开设置或退出（`⌘Q`）。
 
 ### 2. 接入你的 AI 编程工具
-1. 启动 Lumi 后，**Antigravity**、**Codex（含桌面版）**、**Claude Code** 与 **T3 Code** 会自动开始追踪，无需手动配置（且会自动去重 T3 Code 内部托管运行的 Codex / Claude / Antigravity 会话，避免重复弹窗）。
+1. 启动 Lumi 后，**Antigravity**、**Codex（含桌面版）**、**Claude Code**、**T3 Code** 与 **桌面版 Gemini（`Gemini.app`）** 会自动开始追踪，无需手动配置（且会自动去重 T3 Code 内部托管运行的 Codex / Claude / Antigravity 会话，避免重复弹窗）。
 2. 点击齿轮打开 **设置 → AI 工具接入**，可按需一键安装各工具的 Hook：
    - 会在 `~/.lumi/lumi-hook.py` 部署极轻量的原子写入中继脚本（耗时 < 10ms，绝不阻塞宿主 Agent）。
    - 修改任意配置文件前都会自动生成 `*.bak-<时间戳>` 备份；卸载时仅精准移除 Lumi 条目，完全保留你原有的其他 Hook。
 
 ### 3. 点击精准直达对应对话
 - **Codex**（`codex://threads/<id>`）与 **T3 Code**（`t3code://threads/<environmentId>/<threadId>`）均原生支持深链，点击卡片或系统通知即可秒切到具体对话，无需任何系统权限。
+- **桌面版 Gemini（`Gemini.app`）** 会自动置顶匹配对话窗口、点选边栏对应会话或通过 `googlegemini://conversation/<id>` 深链切入。
 - **Antigravity** 暂未开放按对话 ID 跳转的 URL Scheme，因此 Lumi 通过其官方 **`⌘K` 对话搜索面板** 自动定位目标对话（并自动保存和还原你的原剪贴板内容）。
 - 开启步骤：在 **设置 → AI 工具接入** 点击 **「前往授权」**，在 **系统设置 → 隐私与安全性 → 辅助功能** 中开启 **Lumi**。
 - *小贴士*：若你之前用临时 ad-hoc 签名编译过、后来重新编译导致开关开着却提示未就绪，只需在辅助功能列表中选中旧的 `Lumi` 点左下角 **`-`** 删除，再点 **`+`** 重新添加 `/Applications/Lumi.app` 即可。本机装有 Developer ID 证书时，`./scripts/build_app.sh` 会自动签名，后续更新永久不掉权限。
@@ -181,7 +182,8 @@ flowchart LR
     Codex["Codex 桌面版 & CLI\nSQLite + 256KB 尾解析"] --> Store
     Claude["Claude Code\n本地会话 + Hooks"] --> Store
     T3["T3 Code\nstatev2.sqlite WAL + 底层去重"] --> Store
-    Extra["Cursor / Gemini / OpenCode\n~/.lumi/live/*.json"] --> Store
+    Gemini["桌面版 Gemini\n批量 AX + ChatInfo2.store"] --> Store
+    Extra["Cursor / Gemini CLI / OpenCode\n~/.lumi/live/*.json"] --> Store
 
     Store["MonitorStore\n状态机 · 4.5s 防抖\n持久未读收件箱"] --> Notch["刘海灵动岛\nNotchOverlayPanel"]
     Store --> Float["桌面悬浮看板\nStudioBentoBoardView"]
@@ -192,7 +194,7 @@ flowchart LR
 ```text
 Sources/Lumi/
 ├── App/         # AppDelegate、菜单栏状态项、NotchWindowController（物理刘海几何贴合）
-├── Core/        # Antigravity / Codex / Claude / T3Code / 扩展扫描器、WAL 安全 SQLiteReader、HookInstaller、MonitorStore
+├── Core/        # Antigravity / Codex / Claude / T3Code / GeminiDesktop / 扩展扫描器、WAL 安全 SQLiteReader、HookInstaller、MonitorStore
 ├── Mascot/      # LumiMascotView（Lumi Ember 原创自适应帧率 SwiftUI Canvas 暖橘萌宠）
 ├── Models/      # AgentModels、智能项目名消歧 ProjectNameHelper、工具动作格式化
 └── UI/          # NotchIslandView、FloatingBoardView、StudioBentoBoardView、SessionCardView、SettingsView
