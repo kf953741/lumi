@@ -199,6 +199,7 @@ final class MonitorStore: ObservableObject {
     private struct PendingFinish {
         let completedAt: TimeInterval
         let since: Date
+        var waitingForCleanRead: Bool = false
     }
 
     private let statePath: String
@@ -214,10 +215,13 @@ final class MonitorStore: ObservableObject {
     private var lastPruneAt: Date = Date()
     private let completionDebounceSeconds: TimeInterval = 4.5
     private var didInitialScan = false
-    private let launchTime = Date()
+    private let launchTime: Date
     private let suppressSystemSideEffects: Bool
+    /// Observable in tests to assert exact completion notification deliveries (distinct from unread list counts).
+    internal private(set) var confirmedCompletionIds: [String] = []
 
-    init(statePath overrideStatePath: String? = nil, suppressSystemSideEffects: Bool = false) {
+    init(statePath overrideStatePath: String? = nil, launchTime: Date = Date(), suppressSystemSideEffects: Bool = false) {
+        self.launchTime = launchTime
         self.suppressSystemSideEffects = suppressSystemSideEffects
         let d = UserDefaults.standard
         d.register(defaults: [
@@ -344,20 +348,28 @@ final class MonitorStore: ObservableObject {
         let t3 = t3Scanner
         let geminiDesktop = geminiDesktopScanner
         let extra = extraScanner
+        let hasSettlingT3 = pendingFinishSince.keys.contains { $0.hasPrefix("t3code:") }
         scanQueue.async { [weak self] in
             let now = Date()
             let hooksByAgent = LiveHookRecord.loadAllGrouped()
-            let t3Result = t3.scanDetailed(lookbackHours: 24, now: now)
+            let t3Result = t3.scanDetailed(lookbackHours: 24, now: now, forceFresh: hasSettlingT3)
             let underlying = agy.scan(lookbackHours: 24, preloadedHooks: hooksByAgent["antigravity"] ?? [:])
                 + codex.scan(lookbackHours: 24, now: now, preloadedHooks: hooksByAgent["codex"] ?? [:])
                 + claude.scan(lookbackHours: 24, now: now, preloadedHooks: hooksByAgent["claude"] ?? [:])
                 + extra.scan(lookbackHours: 24, preloadedHooksByAgent: hooksByAgent)
             let dedupedUnderlying = underlying.filter { !t3Result.ownsUnderlying($0, now: now) }
             let combined = dedupedUnderlying + t3Result.sessions + geminiDesktop.scan(lookbackHours: 24, now: now)
+            let deferKinds: Set<AgentKind> = t3Result.deferAllCompletions ? [.t3code] : []
+            let deferSessionIds = t3Result.deferredSessionIds
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.scanInFlight = false
-                self.applyScanned(combined, now: now)
+                self.applyScanned(
+                    combined,
+                    now: now,
+                    deferConfirmKinds: deferKinds,
+                    deferConfirmSessionIds: deferSessionIds
+                )
                 if self.pendingRefreshRequested {
                     self.pendingRefreshRequested = false
                     self.refreshNow()
@@ -1027,7 +1039,12 @@ final class MonitorStore: ObservableObject {
 
     // MARK: - State Machine
 
-    func applyScanned(_ scanned: [AgentSession], now: Date = Date()) {
+    func applyScanned(
+        _ scanned: [AgentSession],
+        now: Date = Date(),
+        deferConfirmKinds: Set<AgentKind> = [],
+        deferConfirmSessionIds: Set<String> = []
+    ) {
         let isFirst = !didInitialScan
         didInitialScan = true
         if let until = dndUntil, until <= now {
@@ -1080,18 +1097,19 @@ final class MonitorStore: ObservableObject {
                 )
             } else {
                 notifiedNeedsInputKey.removeValue(forKey: s.id)
-                var dur = s.durationSec
-                if dur == nil, let start = liveStartedAt[s.id] {
-                    dur = max(1, now.timeIntervalSince(start))
-                }
-
                 let compDate = s.completedAt ?? s.updatedAt
                 let compTs = compDate.timeIntervalSince1970
 
+                var dur = s.durationSec
+                if dur == nil, let start = liveStartedAt[s.id] {
+                    dur = max(1, compDate.timeIntervalSince(start))
+                }
+
                 // Auto-ack historical completions whenever a session is seen for the first time (`prev == nil`),
-                // whether on initial scan or appearing later (e.g., metadata sync, reopened DB, or backdated history).
-                if prev == nil && ackedAt[s.id] == nil && (now.timeIntervalSince(compDate) > 900 || (!isFirst && compDate < launchTime)) {
-                    ackedAt[s.id] = compTs
+                // or when a pre-launch completion exits a transient state without ever having run post-launch.
+                let isStalePreLaunch = (!isFirst && compDate < launchTime && (ackedAt[s.id] ?? 0) < compTs)
+                if (ackedAt[s.id] == nil && prev == nil && now.timeIntervalSince(compDate) > 900) || isStalePreLaunch {
+                    ackedAt[s.id] = max(ackedAt[s.id] ?? 0, compTs)
                     ackDirty = true
                 }
 
@@ -1101,20 +1119,30 @@ final class MonitorStore: ObservableObject {
 
                 // Require a continuous settle window keyed by (sessionId, completedAt) before treating a
                 // freshly-stopped running/needsInput turn as done, preventing premature popups during handoffs.
+                // Also pause completion confirmation only for affected kinds/sessionIds during transient DB failures.
                 var settling = false
                 if !isFirst && rawIsUnread && !alreadyNotified {
                     let existingPending = pendingFinishSince[s.id]
                     let isFreshTransition = (prev == .running || prev == .needsInput || existingPending != nil || compDate > launchTime)
                     if isFreshTransition {
-                        let pending: PendingFinish
-                        if let existingPending, abs(existingPending.completedAt - compTs) <= 1.0 {
-                            pending = existingPending
-                        } else {
-                            pending = PendingFinish(completedAt: compTs, since: now)
-                            pendingFinishSince[s.id] = pending
-                        }
-                        if now.timeIntervalSince(pending.since) < completionDebounceSeconds {
+                        let deferThis = deferConfirmKinds.contains(s.kind) || deferConfirmSessionIds.contains(s.id)
+                        if deferThis {
+                            pendingFinishSince[s.id] = PendingFinish(completedAt: compTs, since: now, waitingForCleanRead: true)
                             settling = true
+                        } else {
+                            let pending: PendingFinish
+                            if let existingPending,
+                               !existingPending.waitingForCleanRead,
+                               abs(existingPending.completedAt - compTs) <= 1.0 {
+                                pending = existingPending
+                            } else {
+                                // Restart full 4.5s settle window on first clean read after any transient DB failure
+                                pending = PendingFinish(completedAt: compTs, since: now, waitingForCleanRead: false)
+                                pendingFinishSince[s.id] = pending
+                            }
+                            if now.timeIntervalSince(pending.since) < completionDebounceSeconds {
+                                settling = true
+                            }
                         }
                     }
                 }
@@ -1148,6 +1176,7 @@ final class MonitorStore: ObservableObject {
 
                 if confirmedFreshFinish && rawIsUnread && !alreadyNotified && !s.isCLI {
                     newlyFinished.append(s)
+                    confirmedCompletionIds.append(s.id)
                 }
             }
 

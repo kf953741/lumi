@@ -1023,7 +1023,7 @@ final class LumiCoreTests: XCTestCase {
                 vals.append(SQLiteReader.string(stmt, 0))
             }
         }
-        XCTAssertTrue(ok)
+        XCTAssertEqual(ok, true)
         XCTAssertEqual(vals, ["live"])
     }
 
@@ -1256,5 +1256,1100 @@ final class LumiCoreTests: XCTestCase {
         store.applyScanned([oldSession], now: t0.addingTimeInterval(700))
         store.applyScanned([oldSession], now: t0.addingTimeInterval(702))
         XCTAssertEqual(store.totalUnreadCount, 0)
+    }
+
+    func testT3CodeV2PendingBackgroundTasksSubagentsAndRuntimeRequests() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-p0-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let dbPath = dir.appendingPathComponent("statev2.sqlite").path
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &rawDB), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let now = Date()
+        let tStart = iso.string(from: now.addingTimeInterval(-60))
+        let tRecent = iso.string(from: now.addingTimeInterval(-10))
+        let tOld = iso.string(from: now.addingTimeInterval(-500))
+
+        let sql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+            default_provider TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+            provider TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+            completed_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
+            updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE INDEX orchestration_v2_projection_provider_threads_pending_tasks_idx
+            ON orchestration_v2_projection_provider_threads(thread_id)
+            WHERE CASE WHEN json_valid(payload_json) THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0 ELSE 0 END;
+        CREATE TABLE orchestration_v2_projection_subagents (
+            subagent_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, provider_thread_id TEXT,
+            provider_instance_id TEXT, child_thread_id TEXT, status TEXT NOT NULL,
+            completion_delivery_state TEXT, started_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_runtime_requests (
+            runtime_request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, node_id TEXT,
+            provider_turn_id TEXT, kind TEXT NOT NULL, status TEXT NOT NULL,
+            created_at TEXT NOT NULL, resolved_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE INDEX orchestration_v2_projection_requests_recovery_idx
+            ON orchestration_v2_projection_runtime_requests(thread_id) WHERE status = 'pending';
+        CREATE INDEX orchestration_v2_projection_nodes_thread_run_idx
+            ON orchestration_v2_projection_nodes(thread_id, run_id);
+        CREATE TABLE provider_session_runtime (thread_id TEXT PRIMARY KEY, provider_name TEXT, status TEXT NOT NULL, resume_cursor_json TEXT);
+
+        INSERT INTO projection_projects VALUES ('p1', 'LumiApp', '/Users/test/lumi');
+
+        -- 1. Thread with awaited command in pendingBackgroundTasks -> MUST stay running
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-bg-awaited', 'p1', 'Build in bg', 'claude', '\(tStart)', '\(tRecent)', NULL, NULL,
+             '{"activeProviderThreadId":"pt-bg-1","providerInstanceId":"claude"}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('r-bg-1', 'th-bg-awaited', 1, 'claude', 'completed', '\(tStart)', '\(tRecent)', '{}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-bg-1', 'th-bg-awaited', 'claude',
+             '{"providerInstanceId":"claude","updatedAt":"\(tRecent)","pendingBackgroundTasks":[{"taskId":"t1","kind":"command","awaited":true}]}');
+
+        -- 2. Thread with NON-awaited command daemon in pendingBackgroundTasks -> MUST be done
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-bg-daemon', 'p1', 'Dev server', 'claude', '\(tStart)', '\(tRecent)', NULL, NULL,
+             '{"activeProviderThreadId":"pt-bg-2","providerInstanceId":"claude"}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('r-bg-2', 'th-bg-daemon', 1, 'claude', 'completed', '\(tStart)', '\(tRecent)', '{}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-bg-2', 'th-bg-daemon', 'claude',
+             '{"providerInstanceId":"claude","updatedAt":"\(tRecent)","pendingBackgroundTasks":[{"taskId":"t2","kind":"command"}]}');
+
+        -- 3. Thread with undelivered subagent completion (`completion_delivery_state = pending`, blank provider_thread_id matching run_id) -> MUST stay running
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-sub-pend', 'p1', 'Delegated work', 'codex', '\(tStart)', '\(tRecent)', NULL, NULL,
+             '{"activeProviderThreadId":"pt-sub-1","providerInstanceId":"codex"}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('r-sub-1', 'th-sub-pend', 1, 'codex', 'completed', '\(tStart)', '\(tRecent)', '{}');
+        INSERT INTO orchestration_v2_projection_subagents VALUES
+            ('sub-1', 'th-sub-pend', 'r-sub-1', '', 'codex', '', 'completed', 'pending', '\(tStart)', '\(tRecent)');
+
+        -- 4. Thread with bare run.status = 'waiting' and non-actionable dynamic_tool_call request -> MUST be .running (NOT .needsInput!)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-blip', 'p1', 'Waiting blip', 'antigravity', '\(tStart)', '\(tRecent)', NULL, NULL, '{}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('r-blip', 'th-blip', 1, 'antigravity', 'waiting', '\(tStart)', NULL, '{}');
+        INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+            ('req-dyn', 'th-blip', 'n1', 'pt1', 'dynamic_tool_call', 'pending', '\(tRecent)', NULL, '{"prompt":"internal"}');
+
+        -- 5. Thread with real pending command approval runtime_request -> MUST be .needsInput!
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-appr', 'p1', 'Needs approval', 'claude', '\(tStart)', '\(tRecent)', NULL, NULL, '{}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('r-appr', 'th-appr', 1, 'claude', 'waiting', '\(tStart)', NULL, '{}');
+        INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+            ('req-cmd', 'th-appr', 'n2', 'pt2', 'command', 'pending', '\(tRecent)', NULL,
+             '{"command":"rm -rf build","responseCapability":{"type":"interactive"}}');
+        """
+
+        // Verify exact partial-index query hits `orchestration_v2_projection_provider_threads_pending_tasks_idx`!
+        XCTAssertEqual(sqlite3_exec(rawDB, sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(rawDB), SQLITE_OK)
+
+        let reader = try XCTUnwrap(SQLiteReader(path: dbPath))
+        var planLines: [String] = []
+        _ = reader.query("""
+            EXPLAIN QUERY PLAN
+            SELECT thread_id, provider_thread_id, provider, payload_json
+            FROM orchestration_v2_projection_provider_threads
+            WHERE CASE WHEN json_valid(payload_json) THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0 ELSE 0 END;
+            """) { stmt in
+            planLines.append(SQLiteReader.string(stmt, 3))
+        }
+        XCTAssertTrue(planLines.joined(separator: " ").contains("orchestration_v2_projection_provider_threads_pending_tasks_idx"))
+
+        let scanner = T3CodeScanner(v2DbPath: dbPath, v1DbPath: dir.appendingPathComponent("none.sqlite").path, isT3RunningCheck: { true })
+        let sessions = scanner.scan(lookbackHours: 24, now: now)
+
+        XCTAssertEqual(sessions.first(where: { $0.rawId == "th-bg-awaited" })?.status, .running)
+        XCTAssertEqual(sessions.first(where: { $0.rawId == "th-bg-daemon" })?.status, .done)
+        XCTAssertEqual(sessions.first(where: { $0.rawId == "th-sub-pend" })?.status, .running)
+        XCTAssertEqual(sessions.first(where: { $0.rawId == "th-blip" })?.status, .running)
+        let appr = try XCTUnwrap(sessions.first(where: { $0.rawId == "th-appr" }))
+        XCTAssertEqual(appr.status, .needsInput)
+        XCTAssertTrue(appr.currentAction.contains("rm -rf build"))
+        _ = tOld
+    }
+
+    @MainActor
+    func testT3CodeV2AntigravityHandoffGraceReplaysRun32AndRun33WithoutPrematurePopup() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-handoff-\(UUID().uuidString)")
+        let providersRoot = dir.appendingPathComponent("providers/antigravity").path
+        let subagentsDir = "\(providersRoot)/profile1/antigravity-acp/brain/parent-conv-33/.system_generated/subagents"
+        try fm.createDirectory(atPath: subagentsDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        // Create known Antigravity subagent descriptor file
+        let recipientId = "469e4eb6-a7f5-4e78-9d66-7ff52937e90b"
+        try #"{"conversationId":"469e4eb6-a7f5-4e78-9d66-7ff52937e90b","state":"SUBAGENT_STATE_ALIVE"}"#
+            .write(toFile: "\(subagentsDir)/\(recipientId).json", atomically: true, encoding: .utf8)
+
+        let dbPath = dir.appendingPathComponent("statev2.sqlite").path
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &rawDB), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let launch = Date()
+        let t32Start = launch.addingTimeInterval(10)
+        let t32Tool = launch.addingTimeInterval(61.3)
+        let t32End = launch.addingTimeInterval(70.0)   // 8.7s after send_message (Run 32 real shape)
+        let t33Start = launch.addingTimeInterval(197.8) // +127.8s gap (Run 32 -> Run 33 real counterexample!)
+        let t33Tool = launch.addingTimeInterval(241.8)
+        let t33End = launch.addingTimeInterval(260.0)   // 18.2s after send_message (Run 33 real shape)
+        let t34Start = launch.addingTimeInterval(310.4) // +50.4s gap (Run 33 -> Run 34 real incident!)
+        let t34End = launch.addingTimeInterval(335.0)
+
+        let initSql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+            default_provider TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+            provider TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+            completed_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
+            updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE provider_session_runtime (thread_id TEXT PRIMARY KEY, provider_name TEXT, status TEXT NOT NULL, resume_cursor_json TEXT);
+
+        INSERT INTO projection_projects VALUES ('p1', 'google_sim', '/Users/test/google_sim');
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-sim', 'p1', '复现机器人演示与仿真场景需求', 'antigravity', '\(iso.string(from: t32Start))', '\(iso.string(from: t32End))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-sim","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-sim', 'th-sim', 'antigravity',
+             '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-conv-33"},"pendingBackgroundTasks":[]}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-32', 'th-sim', 32, 'antigravity', 'completed', '\(iso.string(from: t32Start))', '\(iso.string(from: t32End))', '{}');
+        INSERT INTO orchestration_v2_projection_turn_items VALUES
+            ('it-32', 'th-sim', 'run-32', 3201, 'dynamic_tool', 'completed', '\(iso.string(from: t32Tool))',
+             '{"toolName":"Run send_message","completedAt":"\(iso.string(from: t32Tool))","nativeItemRef":{"nativeId":"call_32"},"input":{"Recipient":"\(recipientId)","Message":"re-check"}}');
+        """
+        XCTAssertEqual(sqlite3_exec(rawDB, initSql, nil, nil, nil), SQLITE_OK)
+
+        let scanner = T3CodeScanner(
+            v2DbPath: dbPath,
+            v1DbPath: dir.appendingPathComponent("none.sqlite").path,
+            antigravityProvidersRoot: providersRoot,
+            handoffGraceSeconds: 150.0,
+            launchTime: launch,
+            isT3RunningCheck: { true }
+        )
+        let store = MonitorStore(statePath: dir.appendingPathComponent("read_state.json").path, suppressSystemSideEffects: true)
+
+        // Initial baseline scan before Run 32 completes (simulate active tracking)
+        store.applyScanned([], now: launch)
+
+        // 1. 6s after Run 32 completes (past 4.5s debounce) -> MUST still be held as .running, 0 unread!
+        let s32a = scanner.scan(lookbackHours: 24, now: t32End.addingTimeInterval(6))
+        store.applyScanned(s32a, now: t32End.addingTimeInterval(6))
+        XCTAssertEqual(s32a.first?.status, .running)
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // 2. 120s after Run 32 completes (still inside 150s grace covering the 127.8s real gap!) -> still .running, 0 unread!
+        let s32b = scanner.scan(lookbackHours: 24, now: t32End.addingTimeInterval(120))
+        store.applyScanned(s32b, now: t32End.addingTimeInterval(120))
+        XCTAssertEqual(s32b.first?.status, .running)
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // 3. Run 33 starts at +127.8s and completes after calling send_message 18.2s earlier
+        let run33Sql = """
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-33', 'th-sim', 33, 'antigravity', 'completed', '\(iso.string(from: t33Start))', '\(iso.string(from: t33End))', '{}');
+        INSERT INTO orchestration_v2_projection_turn_items VALUES
+            ('it-33', 'th-sim', 'run-33', 3301, 'dynamic_tool', 'completed', '\(iso.string(from: t33Tool))',
+             '{"toolName":"Run send_message","completedAt":"\(iso.string(from: t33Tool))","nativeItemRef":{"nativeId":"call_33"},"input":{"Recipient":"\(recipientId)","Message":"re-check v2"}}');
+        UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: t33End))' WHERE thread_id = 'th-sim';
+        """
+        XCTAssertEqual(sqlite3_exec(rawDB, run33Sql, nil, nil, nil), SQLITE_OK)
+
+        // 10s after Run 33 completes -> MUST stay .running, ZERO premature completion!
+        let s33 = scanner.scan(lookbackHours: 24, now: t33End.addingTimeInterval(10))
+        store.applyScanned(s33, now: t33End.addingTimeInterval(10))
+        XCTAssertEqual(s33.first?.status, .running)
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // 4. Run 34 wakes at +50.4s and finishes normally WITHOUT calling send_message
+        let run34Sql = """
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-34', 'th-sim', 34, 'antigravity', 'completed', '\(iso.string(from: t34Start))', '\(iso.string(from: t34End))', '{}');
+        UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: t34End))' WHERE thread_id = 'th-sim';
+        """
+        XCTAssertEqual(sqlite3_exec(rawDB, run34Sql, nil, nil, nil), SQLITE_OK)
+
+        // Immediately at t34End + 1s -> settling in 4.5s debounce
+        let s34a = scanner.scan(lookbackHours: 24, now: t34End.addingTimeInterval(1))
+        XCTAssertEqual(s34a.first?.status, .done)
+        store.applyScanned(s34a, now: t34End.addingTimeInterval(1))
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // At t34End + 6s -> confirmed ONE final completion!
+        let s34b = scanner.scan(lookbackHours: 24, now: t34End.addingTimeInterval(6))
+        store.applyScanned(s34b, now: t34End.addingTimeInterval(6))
+        XCTAssertEqual(store.totalUnreadCount, 1)
+        XCTAssertEqual(store.allSessions.first?.durationSec ?? 0, 24.6, accuracy: 0.5)
+
+        // 5. Verify cache invalidates cleanly when an orphaned handoff reaches grace deadline (no DB changes!)
+        let t35Start = t34End.addingTimeInterval(20)
+        let t35Tool = t35Start.addingTimeInterval(5)
+        let t35End = t35Start.addingTimeInterval(10)
+        let run35Sql = """
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-35', 'th-sim', 35, 'antigravity', 'completed', '\(iso.string(from: t35Start))', '\(iso.string(from: t35End))', '{}');
+        INSERT INTO orchestration_v2_projection_turn_items VALUES
+            ('it-35', 'th-sim', 'run-35', 3501, 'dynamic_tool', 'completed', '\(iso.string(from: t35Tool))',
+             '{"toolName":"Run send_message","completedAt":"\(iso.string(from: t35Tool))","nativeItemRef":{"nativeId":"call_35"},"input":{"Recipient":"\(recipientId)","Message":"final note"}}');
+        UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: t35End))' WHERE thread_id = 'th-sim';
+        """
+        XCTAssertEqual(sqlite3_exec(rawDB, run35Sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(rawDB), SQLITE_OK)
+
+        let s35Held = scanner.scan(lookbackHours: 24, now: t35End.addingTimeInterval(10))
+        XCTAssertEqual(s35Held.first?.status, .running)
+
+        // Without touching DB/WAL at all, scanning at t35End + 151s MUST bypass cache and release as .done with exact 10s duration!
+        let s35Expired = scanner.scan(lookbackHours: 24, now: t35End.addingTimeInterval(151))
+        let expSession = try XCTUnwrap(s35Expired.first)
+        XCTAssertEqual(expSession.status, .done)
+        XCTAssertEqual(expSession.durationSec ?? 0, 10.0, accuracy: 0.5)
+
+        // 6. Verify Lumi restart (launchTime AFTER t35End) NEVER holds historical completed runs as .running!
+        let restartedScanner = T3CodeScanner(
+            v2DbPath: dbPath,
+            v1DbPath: dir.appendingPathComponent("none.sqlite").path,
+            antigravityProvidersRoot: providersRoot,
+            handoffGraceSeconds: 150.0,
+            launchTime: t35End.addingTimeInterval(5),
+            isT3RunningCheck: { true }
+        )
+        let afterRestart = restartedScanner.scan(lookbackHours: 24, now: t35End.addingTimeInterval(10))
+        XCTAssertEqual(afterRestart.first?.status, .done)
+    }
+
+    @MainActor
+    func testT3CodeV2AntigravityACPSummaryDBReplaysRun39GapAndBackgroundCommands() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-acp-live-\(UUID().uuidString)")
+        let providersRoot = dir.appendingPathComponent("providers/antigravity").path
+        let acpDir = "\(providersRoot)/profile1/antigravity-acp"
+        let subagentsDir = "\(acpDir)/brain/parent-39/.system_generated/subagents"
+        try fm.createDirectory(atPath: subagentsDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let subagentId = "469e4eb6-a7f5-4e78-9d66-7ff52937e90b"
+        try #"{"conversationId":"469e4eb6-a7f5-4e78-9d66-7ff52937e90b","state":"SUBAGENT_STATE_ALIVE"}"#
+            .write(toFile: "\(subagentsDir)/\(subagentId).json", atomically: true, encoding: .utf8)
+
+        let v2Path = dir.appendingPathComponent("statev2.sqlite").path
+        let acpDbPath = "\(acpDir)/conversation_summaries.db"
+        var v2DB: OpaquePointer?
+        var acpDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(v2Path, &v2DB), SQLITE_OK)
+        XCTAssertEqual(sqlite3_open(acpDbPath, &acpDB), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func acpTS(_ d: Date) -> String {
+            iso.string(from: d).replacingOccurrences(of: "T", with: " ").replacingOccurrences(of: "Z", with: "+00:00")
+        }
+
+        let launch = Date()
+        let t39Start = launch.addingTimeInterval(10)
+        let t39Tool = launch.addingTimeInterval(290)
+        let t39End = launch.addingTimeInterval(306) // Run 39 completed (4m56s)
+
+        let v2Sql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+            default_provider TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+            provider TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+            completed_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
+            updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE provider_session_runtime (thread_id TEXT PRIMARY KEY, provider_name TEXT, status TEXT NOT NULL, resume_cursor_json TEXT);
+
+        INSERT INTO projection_projects VALUES ('p1', 'google_sim', '/Users/test/google_sim');
+
+        -- Thread 1: Run 39 completed (with older inactive provider_thread row too -> must resolve activeProviderThreadId!)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-39', 'p1', '复现机器人演示与仿真场景需求', 'antigravity', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-active","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-old', 'th-39', 'antigravity', '{"nativeThreadRef":{"driver":"antigravity","nativeId":"stale-old-conv"}}'),
+            ('pt-active', 'th-39', 'antigravity', '{"nativeThreadRef":{"driver":"antigravity","nativeId":"parent-39"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-39', 'th-39', 39, 'antigravity', 'completed', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', '{}');
+        INSERT INTO orchestration_v2_projection_turn_items VALUES
+            ('it-39', 'th-39', 'run-39', 3901, 'dynamic_tool', 'completed', '\(iso.string(from: t39Tool))',
+             '{"toolName":"Run send_message","completedAt":"\(iso.string(from: t39Tool))","nativeItemRef":{"nativeId":"call_39"},"input":{"Recipient":"\(subagentId)","Message":"audit"}}');
+
+        -- Thread 2: Background run_command (Run 42 shape, NO send_message at all!)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-bg', 'p1', 'Bg rsync task', 'antigravity', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-bg","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-bg', 'th-bg', 'antigravity', '{"nativeThreadRef":{"driver":"antigravity","nativeId":"parent-bg"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-42', 'th-bg', 42, 'antigravity', 'completed', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', '{}');
+
+        -- Thread 3: Cancelled run -> MUST NOT be promoted even if ACP DB briefly still shows RUNNING
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-cancel', 'p1', 'Stopped task', 'antigravity', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-cancel","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-cancel', 'th-cancel', 'antigravity', '{"nativeThreadRef":{"driver":"antigravity","nativeId":"parent-cancel"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-c', 'th-cancel', 1, 'antigravity', 'cancelled', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', '{}');
+        """
+        XCTAssertEqual(sqlite3_exec(v2DB, v2Sql, nil, nil, nil), SQLITE_OK)
+
+        let acpInitSql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            parent_conversation_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            not_fully_idle INTEGER NOT NULL DEFAULT 0,
+            killed INTEGER NOT NULL DEFAULT 0,
+            last_modified_time TEXT NOT NULL
+        );
+        -- Subagent actively running while parent-39 is IDLE (126s subagent phase)
+        INSERT INTO conversation_summaries VALUES
+            ('parent-39', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(t39End))'),
+            ('\(subagentId)', 'parent-39', 'CASCADE_RUN_STATUS_RUNNING', 1, 0, '\(acpTS(t39End.addingTimeInterval(60)))'),
+            -- Background command running on parent-bg (IDLE + not_fully_idle = 1)
+            ('parent-bg', '', 'CASCADE_RUN_STATUS_IDLE', 1, 0, '\(acpTS(t39End.addingTimeInterval(5)))'),
+            -- Cancelled thread still briefly RUNNING in ACP DB
+            ('parent-cancel', '', 'CASCADE_RUN_STATUS_RUNNING', 1, 0, '\(acpTS(t39End))'),
+            -- Killed subagent must be ignored
+            ('killed-sub', 'parent-39', 'CASCADE_RUN_STATUS_RUNNING', 1, 1, '\(acpTS(t39End))');
+        """
+        XCTAssertEqual(sqlite3_exec(acpDB, acpInitSql, nil, nil, nil), SQLITE_OK)
+
+        let scanner = T3CodeScanner(
+            v2DbPath: v2Path,
+            v1DbPath: dir.appendingPathComponent("none.sqlite").path,
+            antigravityProvidersRoot: providersRoot,
+            handoffGraceSeconds: 150.0,
+            launchTime: launch,
+            isT3RunningCheck: { true }
+        )
+        let store = MonitorStore(statePath: dir.appendingPathComponent("read_state.json").path, suppressSystemSideEffects: true)
+        store.applyScanned([], now: launch)
+
+        // 1. At t39End + 100s: Subagent still running -> th-39 is .running (1 subagent), th-bg is .running (background task), th-cancel stays .canceled!
+        let s1 = scanner.scan(lookbackHours: 24, now: t39End.addingTimeInterval(100))
+        store.applyScanned(s1, now: t39End.addingTimeInterval(100))
+        let th39_1 = try XCTUnwrap(s1.first(where: { $0.rawId == "th-39" }))
+        XCTAssertEqual(th39_1.status, .running)
+        XCTAssertEqual(th39_1.activeSubagents, 1)
+        XCTAssertEqual(th39_1.currentAction, "等待 1 个子 Agent 执行…")
+        let thBg_1 = try XCTUnwrap(s1.first(where: { $0.rawId == "th-bg" }))
+        XCTAssertEqual(thBg_1.status, .running)
+        XCTAssertEqual(thBg_1.currentAction, "后台任务运行中…")
+        XCTAssertEqual(s1.first(where: { $0.rawId == "th-cancel" })?.status, .canceled)
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // 2. At t39End + 160s (PAST old 150s grace!!): Subagent finished (IDLE), parent-39 ALREADY woke up and is thinking
+        //    (`CASCADE_RUN_STATUS_RUNNING`) BEFORE T3 Code creates Run 40 in statev2.sqlite! (Exact Run 39 -> Run 40 gap!)
+        let tParentWake = t39End.addingTimeInterval(126)
+        let acpPhase2 = """
+        UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0, last_modified_time = '\(acpTS(tParentWake))' WHERE conversation_id = '\(subagentId)';
+        UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_RUNNING', not_fully_idle = 1, last_modified_time = '\(acpTS(t39End.addingTimeInterval(155)))' WHERE conversation_id = 'parent-39';
+        """
+        XCTAssertEqual(sqlite3_exec(acpDB, acpPhase2, nil, nil, nil), SQLITE_OK)
+
+        let s2 = scanner.scan(lookbackHours: 24, now: t39End.addingTimeInterval(160))
+        store.applyScanned(s2, now: t39End.addingTimeInterval(160))
+        let th39_2 = try XCTUnwrap(s2.first(where: { $0.rawId == "th-39" }))
+        XCTAssertEqual(th39_2.status, .running)
+        XCTAssertEqual(th39_2.currentAction, "思考与执行中…")
+        XCTAssertEqual(store.totalUnreadCount, 0)
+
+        // 3. Parent & bg command finally go IDLE/0 in ACP DB (WITHOUT changing statev2.sqlite at all!)
+        //    -> During the 12s post-ACP-idle seam they stay .running ("等待主会话接续…") to absorb handoff gaps;
+        //       right after seam expiry they release to .done and emit clean completions after 4.5s debounce!
+        let tAllDone = t39End.addingTimeInterval(162)
+        let acpPhase3 = """
+        UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0, last_modified_time = '\(acpTS(tAllDone))' WHERE conversation_id IN ('parent-39', 'parent-bg');
+        """
+        XCTAssertEqual(sqlite3_exec(acpDB, acpPhase3, nil, nil, nil), SQLITE_OK)
+
+        // At tAllDone + 1s (first IDLE observation starts the 12s post-ACP-idle seam -> expires at tAllDone + 13s) -> still held!
+        let s3Seam = scanner.scan(lookbackHours: 24, now: tAllDone.addingTimeInterval(1))
+        XCTAssertEqual(s3Seam.first(where: { $0.rawId == "th-39" })?.status, .running)
+        XCTAssertEqual(s3Seam.first(where: { $0.rawId == "th-bg" })?.status, .running)
+
+        // Past 12s post-ACP-idle seam from first IDLE observation (tAllDone + 1s + 12s = tAllDone + 13s) -> releases cleanly as .done!
+        let tAfterSeam = tAllDone.addingTimeInterval(14)
+        let s3Done = scanner.scan(lookbackHours: 24, now: tAfterSeam)
+        XCTAssertEqual(s3Done.first(where: { $0.rawId == "th-39" })?.status, .done)
+        XCTAssertEqual(s3Done.first(where: { $0.rawId == "th-bg" })?.status, .done)
+
+        // Settle past 4.5s debounce -> emits final completions cleanly!
+        store.applyScanned(s3Done, now: tAfterSeam)
+        XCTAssertEqual(store.totalUnreadCount, 0)
+        let s4 = scanner.scan(lookbackHours: 24, now: tAfterSeam.addingTimeInterval(5))
+        store.applyScanned(s4, now: tAfterSeam.addingTimeInterval(5))
+        XCTAssertEqual(store.totalUnreadCount, 2)
+
+        XCTAssertEqual(sqlite3_close(v2DB), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(acpDB), SQLITE_OK)
+    }
+
+    @MainActor
+    func testT3CodeV2TickByTickReplayRun39To40AndRun42To43WithFailureAndRestartGuards() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-tick-replay-\(UUID().uuidString)")
+        let providersRoot = dir.appendingPathComponent("providers/antigravity").path
+        let acpDir = "\(providersRoot)/profile1/antigravity-acp"
+        let subagentsDir = "\(acpDir)/brain/parent-39/.system_generated/subagents"
+        try fm.createDirectory(atPath: subagentsDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let subId = "469e4eb6-a7f5-4e78-9d66-7ff52937e90b"
+        try #"{"conversationId":"469e4eb6-a7f5-4e78-9d66-7ff52937e90b","state":"SUBAGENT_STATE_ALIVE"}"#
+            .write(toFile: "\(subagentsDir)/\(subId).json", atomically: true, encoding: .utf8)
+
+        let v2Path = dir.appendingPathComponent("statev2.sqlite").path
+        let acpDbPath = "\(acpDir)/conversation_summaries.db"
+        var v2DB: OpaquePointer?
+        var acpDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(v2Path, &v2DB), SQLITE_OK)
+        XCTAssertEqual(sqlite3_open(acpDbPath, &acpDB), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func acpTS(_ d: Date) -> String {
+            iso.string(from: d).replacingOccurrences(of: "T", with: " ").replacingOccurrences(of: "Z", with: "+00:00")
+        }
+
+        let launch = Date()
+        let t39Start = launch.addingTimeInterval(10)
+        let t39Tool = launch.addingTimeInterval(290)
+        let t39End = launch.addingTimeInterval(306)
+
+        let v2Init = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+            default_provider TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+            provider TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+            completed_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
+            updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE provider_session_runtime (thread_id TEXT PRIMARY KEY, provider_name TEXT, status TEXT NOT NULL, resume_cursor_json TEXT);
+
+        INSERT INTO projection_projects VALUES ('p1', 'google_sim', '/Users/test/google_sim');
+
+        -- Run 39 (send_message -> 126s subagent -> 6s BOTH-IDLE handoff seam -> 46.5s parent wake -> Run 40 INSERT at +178.5s!)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-39', 'p1', 'Run 39->40', 'antigravity', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-39","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-39', 'th-39', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-39"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-39', 'th-39', 39, 'antigravity', 'completed', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))',
+             '{"providerThreadId":"pt-39","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_turn_items VALUES
+            ('it-39', 'th-39', 'run-39', 3901, 'dynamic_tool', 'completed', '\(iso.string(from: t39Tool))',
+             '{"toolName":"Run send_message","completedAt":"\(iso.string(from: t39Tool))","nativeItemRef":{"nativeId":"call_39"},"input":{"Recipient":"\(subId)","Message":"audit"}}');
+
+        -- Run 42 (NO send_message, background run_command not_fully_idle=1 -> 6s IDLE seam -> Run 43 INSERT at +14s!)
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-42', 'p1', 'Run 42->43', 'antigravity', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-42","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-42', 'th-42', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-42"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-42', 'th-42', 42, 'antigravity', 'completed', '\(iso.string(from: t39Start))', '\(iso.string(from: t39End))',
+             '{"providerThreadId":"pt-42","providerInstanceId":"antigravity"}');
+        """
+        XCTAssertEqual(sqlite3_exec(v2DB, v2Init, nil, nil, nil), SQLITE_OK)
+
+        let acpInit = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            parent_conversation_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            not_fully_idle INTEGER NOT NULL DEFAULT 0,
+            killed INTEGER NOT NULL DEFAULT 0,
+            last_modified_time TEXT NOT NULL
+        );
+        INSERT INTO conversation_summaries VALUES
+            ('parent-39', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(t39End))'),
+            ('\(subId)', 'parent-39', 'CASCADE_RUN_STATUS_RUNNING', 1, 0, '\(acpTS(t39End))'),
+            ('parent-42', '', 'CASCADE_RUN_STATUS_IDLE', 1, 0, '\(acpTS(t39End))');
+        """
+        XCTAssertEqual(sqlite3_exec(acpDB, acpInit, nil, nil, nil), SQLITE_OK)
+
+        let scanner = T3CodeScanner(
+            v2DbPath: v2Path,
+            v1DbPath: dir.appendingPathComponent("none.sqlite").path,
+            antigravityProvidersRoot: providersRoot,
+            handoffGraceSeconds: 150.0,
+            acpIdleSeamSeconds: 12.0,
+            launchTime: launch,
+            isT3RunningCheck: { true }
+        )
+        let store = MonitorStore(statePath: dir.appendingPathComponent("read_state.json").path, suppressSystemSideEffects: true)
+        store.applyScanned([], now: launch)
+
+        // Tick every 1.5s from t39End+1.5s to t39End+195s!
+        var tOffset: TimeInterval = 1.5
+        var didRun42IdleSeam = false
+        var didRun43Insert = false
+        var didRun43Complete = false
+        var didSubagentFinishSeam = false
+        var didParentWake = false
+        var didRun40Insert = false
+        var didRun40Complete = false
+
+        while tOffset <= 198.0 {
+            let now = t39End.addingTimeInterval(tOffset)
+
+            // Run 42 bg command flips IDLE at +8s -> 6s BOTH-IDLE seam until Run 43 starts at +14s -> completes at +22s
+            if !didRun42IdleSeam && tOffset >= 8.0 {
+                didRun42IdleSeam = true
+                XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET not_fully_idle = 0, last_modified_time = '\(acpTS(now))' WHERE conversation_id = 'parent-42';", nil, nil, nil), SQLITE_OK)
+            }
+            if !didRun43Insert && tOffset >= 14.0 {
+                didRun43Insert = true
+                XCTAssertEqual(sqlite3_exec(v2DB, """
+                    INSERT INTO orchestration_v2_projection_runs VALUES
+                        ('run-43', 'th-42', 43, 'antigravity', 'running', '\(iso.string(from: now))', NULL, '{"providerThreadId":"pt-42","providerInstanceId":"antigravity"}');
+                    UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: now))' WHERE thread_id = 'th-42';
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+            if !didRun43Complete && tOffset >= 22.0 {
+                didRun43Complete = true
+                XCTAssertEqual(sqlite3_exec(v2DB, """
+                    UPDATE orchestration_v2_projection_runs SET status = 'completed', completed_at = '\(iso.string(from: now))' WHERE run_id = 'run-43';
+                    UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: now))' WHERE thread_id = 'th-42';
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+
+            // Run 39 subagent flips IDLE at +126s while parent stays IDLE for 6 FULL seconds (+126s..+132s) ->
+            // parent wakes as BUSY/RUNNING at +132s -> Run 40 inserted into statev2.sqlite at +178.5s -> completes at +186s!
+            if !didSubagentFinishSeam && tOffset >= 126.0 {
+                didSubagentFinishSeam = true
+                XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0, last_modified_time = '\(acpTS(now))' WHERE conversation_id = '\(subId)';", nil, nil, nil), SQLITE_OK)
+            }
+            if !didParentWake && tOffset >= 132.0 {
+                didParentWake = true
+                XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_BUSY', not_fully_idle = 1, last_modified_time = '\(acpTS(now))' WHERE conversation_id = 'parent-39';", nil, nil, nil), SQLITE_OK)
+            }
+            if !didRun40Insert && tOffset >= 178.5 {
+                didRun40Insert = true
+                XCTAssertEqual(sqlite3_exec(v2DB, """
+                    INSERT INTO orchestration_v2_projection_runs VALUES
+                        ('run-40', 'th-39', 40, 'antigravity', 'running', '\(iso.string(from: now))', NULL, '{"providerThreadId":"pt-39","providerInstanceId":"antigravity"}');
+                    UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: now))' WHERE thread_id = 'th-39';
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+            if !didRun40Complete && tOffset >= 186.0 {
+                didRun40Complete = true
+                XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0, last_modified_time = '\(acpTS(now))' WHERE conversation_id = 'parent-39';", nil, nil, nil), SQLITE_OK)
+                XCTAssertEqual(sqlite3_exec(v2DB, """
+                    UPDATE orchestration_v2_projection_runs SET status = 'completed', completed_at = '\(iso.string(from: now))' WHERE run_id = 'run-40';
+                    UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: now))' WHERE thread_id = 'th-39';
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+
+            let res = scanner.scanDetailed(lookbackHours: 24, now: now)
+            store.applyScanned(res.sessions, now: now, deferConfirmKinds: res.hadTransientFailure ? [.t3code] : [])
+
+            // Before Run 43 finishes (+22s), ZERO premature popups!
+            if tOffset < 22.0 {
+                XCTAssertEqual(store.totalUnreadCount, 0, "Premature popup before Run 43 finished at t+\(tOffset)s")
+            }
+            // Between Run 43 finish (+27s) and Run 40 finish (+186s), ONLY th-42 may be unread (NEVER th-39!)
+            if tOffset >= 28.0 && tOffset < 186.0 {
+                XCTAssertEqual(store.totalUnreadCount, 1, "Premature popup for Run 39->40 at t+\(tOffset)s")
+                XCTAssertEqual(store.unreadCompletedSessions.map(\.rawId), ["th-42"])
+            }
+            tOffset += 1.5
+        }
+
+        // After Run 40 finishes (+186s + 4.5s debounce), BOTH th-42 and th-39 emitted EXACTLY 1 confirmed completion each!
+        XCTAssertEqual(store.totalUnreadCount, 2)
+        XCTAssertEqual(store.confirmedCompletionIds, ["t3code:th-42", "t3code:th-39"])
+
+        // --- Regression 2: Unchanged FileStamp SQLite EXCLUSIVE lock failure crossing >6.5s (scoped deferral!) ---
+        // Add BOTH an Antigravity thread (`th-fail`) AND a Codex thread (`th-codex`).
+        // Hold `BEGIN EXCLUSIVE` on `acpDB` so `FileStamp` is 100% UNCHANGED while reads fail with SQLITE_BUSY!
+        let tFailBase = t39End.addingTimeInterval(220)
+        XCTAssertEqual(sqlite3_exec(v2DB, """
+            INSERT INTO orchestration_v2_projection_threads VALUES
+                ('th-fail', 'p1', 'ACP Fail Guard', 'antigravity', '\(iso.string(from: tFailBase))', '\(iso.string(from: tFailBase.addingTimeInterval(5)))', NULL, NULL,
+                 '{"activeProviderThreadId":"pt-fail","providerInstanceId":"antigravity"}'),
+                ('th-codex', 'p1', 'Codex Unaffected', 'codex', '\(iso.string(from: tFailBase))', '\(iso.string(from: tFailBase.addingTimeInterval(5)))', NULL, NULL,
+                 '{"activeProviderThreadId":"pt-codex","providerInstanceId":"codex"}');
+            INSERT INTO orchestration_v2_projection_provider_threads VALUES
+                ('pt-fail', 'th-fail', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-fail"}}'),
+                ('pt-codex', 'th-codex', 'codex', '{"providerInstanceId":"codex","nativeThreadRef":{"driver":"codex","nativeId":"codex-conv-1"}}');
+            INSERT INTO orchestration_v2_projection_runs VALUES
+                ('run-fail', 'th-fail', 1, 'antigravity', 'completed', '\(iso.string(from: tFailBase))', '\(iso.string(from: tFailBase.addingTimeInterval(5)))',
+                 '{"providerThreadId":"pt-fail","providerInstanceId":"antigravity"}'),
+                ('run-codex', 'th-codex', 1, 'codex', 'completed', '\(iso.string(from: tFailBase))', '\(iso.string(from: tFailBase.addingTimeInterval(5)))',
+                 '{"providerThreadId":"pt-codex","providerInstanceId":"codex"}');
+            """, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(acpDB, "INSERT INTO conversation_summaries VALUES ('parent-fail', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tFailBase.addingTimeInterval(5)))');", nil, nil, nil), SQLITE_OK)
+
+        // Start settling both cleanly at +6s
+        let rOk1 = scanner.scanDetailed(lookbackHours: 24, now: tFailBase.addingTimeInterval(6), forceFresh: false)
+        XCTAssertFalse(rOk1.hadTransientFailure)
+        store.applyScanned(rOk1.sessions, now: tFailBase.addingTimeInterval(6), deferConfirmKinds: rOk1.deferAllCompletions ? [.t3code] : [], deferConfirmSessionIds: rOk1.deferredSessionIds)
+
+        // Acquire a genuine SQLite WAL EXCLUSIVE lock (`PRAGMA locking_mode=EXCLUSIVE` + `BEGIN EXCLUSIVE`)
+        // touching 0 rows so BOTH db and -wal FileStamps stay 100% UNCHANGED while readers hit SQLITE_BUSY (5)!
+        var stDbBefore = stat()
+        var stWalBefore = stat()
+        XCTAssertEqual(stat(acpDbPath, &stDbBefore), 0)
+        let hasWalBefore = (stat(acpDbPath + "-wal", &stWalBefore) == 0)
+        XCTAssertEqual(sqlite3_exec(acpDB, "PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; UPDATE conversation_summaries SET killed = killed WHERE 0;", nil, nil, nil), SQLITE_OK)
+
+        let rLock1 = scanner.scanDetailed(lookbackHours: 24, now: tFailBase.addingTimeInterval(8), forceFresh: true)
+        XCTAssertFalse(rLock1.deferAllCompletions, "ACP DB lock must NOT defer non-Antigravity Codex sessions!")
+        XCTAssertTrue(rLock1.deferredSessionIds.contains("t3code:th-fail"))
+        XCTAssertFalse(rLock1.deferredSessionIds.contains("t3code:th-codex"))
+        store.applyScanned(rLock1.sessions, now: tFailBase.addingTimeInterval(8), deferConfirmKinds: [], deferConfirmSessionIds: rLock1.deferredSessionIds)
+
+        let rLock2 = scanner.scanDetailed(lookbackHours: 24, now: tFailBase.addingTimeInterval(13), forceFresh: true)
+        XCTAssertTrue(rLock2.deferredSessionIds.contains("t3code:th-fail"), "Dirty ACP path must still retry on unchanged FileStamp!")
+        store.applyScanned(rLock2.sessions, now: tFailBase.addingTimeInterval(13), deferConfirmKinds: [], deferConfirmSessionIds: rLock2.deferredSessionIds)
+        // Codex thread confirmed cleanly despite ACP lock, while Antigravity thread stayed paused!
+        XCTAssertEqual(store.confirmedCompletionIds, ["t3code:th-42", "t3code:th-39", "t3code:th-codex"])
+
+        // Release exclusive lock (BOTH db and -wal FileStamps stay 100% UNCHANGED!) -> dirty path retries even with forceFresh: false!
+        XCTAssertEqual(sqlite3_exec(acpDB, "ROLLBACK; PRAGMA locking_mode=NORMAL; SELECT 1 FROM conversation_summaries LIMIT 1;", nil, nil, nil), SQLITE_OK)
+        var stDbAfter = stat()
+        var stWalAfter = stat()
+        XCTAssertEqual(stat(acpDbPath, &stDbAfter), 0)
+        XCTAssertEqual(stDbBefore.st_ino, stDbAfter.st_ino)
+        XCTAssertEqual(stDbBefore.st_size, stDbAfter.st_size)
+        XCTAssertEqual(stDbBefore.st_mtimespec.tv_sec, stDbAfter.st_mtimespec.tv_sec)
+        XCTAssertEqual(stDbBefore.st_mtimespec.tv_nsec, stDbAfter.st_mtimespec.tv_nsec)
+        if hasWalBefore {
+            XCTAssertEqual(stat(acpDbPath + "-wal", &stWalAfter), 0)
+            XCTAssertEqual(stWalBefore.st_size, stWalAfter.st_size)
+            XCTAssertEqual(stWalBefore.st_mtimespec.tv_sec, stWalAfter.st_mtimespec.tv_sec)
+            XCTAssertEqual(stWalBefore.st_mtimespec.tv_nsec, stWalAfter.st_mtimespec.tv_nsec)
+        }
+
+        let rRec1 = scanner.scanDetailed(lookbackHours: 24, now: tFailBase.addingTimeInterval(14.5), forceFresh: false)
+        XCTAssertFalse(rRec1.hadTransientFailure, "Dirty ACP path must recover on unchanged FileStamp!")
+        store.applyScanned(rRec1.sessions, now: tFailBase.addingTimeInterval(14.5))
+        // At +17.5s (3.0s after first clean read at +14.5s, even though 4.5s after failed +13s!) -> MUST STILL be settling!
+        let rRecMid = scanner.scanDetailed(lookbackHours: 24, now: tFailBase.addingTimeInterval(17.5), forceFresh: true)
+        store.applyScanned(rRecMid.sessions, now: tFailBase.addingTimeInterval(17.5))
+        XCTAssertEqual(store.confirmedCompletionIds, ["t3code:th-42", "t3code:th-39", "t3code:th-codex"], "Must require full 4.5s of clean reads after failure recovery!")
+        // At +19.5s (5.0s after first clean read at +14.5s) -> confirms cleanly!
+        let rRec2 = scanner.scanDetailed(lookbackHours: 24, now: tFailBase.addingTimeInterval(19.5), forceFresh: true)
+        store.applyScanned(rRec2.sessions, now: tFailBase.addingTimeInterval(19.5))
+        XCTAssertEqual(store.confirmedCompletionIds, ["t3code:th-42", "t3code:th-39", "t3code:th-codex", "t3code:th-fail"])
+
+        // --- Regression 3: Lumi restart while pre-launch Run's ACP depth-2 grandchild is active, finishes post-launch without Run N+1 ---
+        let restartLaunch = tFailBase.addingTimeInterval(50)
+        let preLaunchStart = restartLaunch.addingTimeInterval(-60)
+        let preLaunchEnd = restartLaunch.addingTimeInterval(-10)
+        XCTAssertEqual(sqlite3_exec(v2DB, """
+            INSERT INTO orchestration_v2_projection_threads VALUES
+                ('th-pre', 'p1', 'Pre-launch ACP work', 'antigravity', '\(iso.string(from: preLaunchStart))', '\(iso.string(from: preLaunchEnd))', NULL, NULL,
+                 '{"activeProviderThreadId":"pt-pre","providerInstanceId":"antigravity"}');
+            INSERT INTO orchestration_v2_projection_provider_threads VALUES
+                ('pt-pre', 'th-pre', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-pre"}}');
+            INSERT INTO orchestration_v2_projection_runs VALUES
+                ('run-pre', 'th-pre', 1, 'antigravity', 'completed', '\(iso.string(from: preLaunchStart))', '\(iso.string(from: preLaunchEnd))',
+                 '{"providerThreadId":"pt-pre","providerInstanceId":"antigravity"}');
+            """, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(acpDB, """
+            INSERT INTO conversation_summaries VALUES
+                ('parent-pre', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(preLaunchEnd))'),
+                ('mid-idle', 'parent-pre', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(preLaunchEnd))'),
+                ('grandchild-pre', 'mid-idle', 'CASCADE_RUN_STATUS_RUNNING', 1, 0, '\(acpTS(restartLaunch))');
+            """, nil, nil, nil), SQLITE_OK)
+
+        let restartedScanner = T3CodeScanner(
+            v2DbPath: v2Path,
+            v1DbPath: dir.appendingPathComponent("none.sqlite").path,
+            antigravityProvidersRoot: providersRoot,
+            handoffGraceSeconds: 150.0,
+            acpIdleSeamSeconds: 6.0,
+            launchTime: restartLaunch,
+            isT3RunningCheck: { true }
+        )
+        let restartedStore = MonitorStore(
+            statePath: dir.appendingPathComponent("read_state_restart.json").path,
+            launchTime: restartLaunch,
+            suppressSystemSideEffects: true
+        )
+
+        // First scan right at restartLaunch: th-pre MUST be .running via depth-2 grandchild (NOT unread)!
+        let rs1 = restartedScanner.scanDetailed(lookbackHours: 24, now: restartLaunch.addingTimeInterval(1))
+        XCTAssertEqual(rs1.sessions.first(where: { $0.rawId == "th-pre" })?.status, .running)
+        restartedStore.applyScanned(rs1.sessions, now: restartLaunch.addingTimeInterval(1))
+        XCTAssertEqual(restartedStore.confirmedCompletionIds, [])
+
+        // Grandchild finishes post-launch at restartLaunch + 20s (NO Run N+1!)
+        let tPostFinish = restartLaunch.addingTimeInterval(20)
+        XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0, last_modified_time = '\(acpTS(tPostFinish))' WHERE conversation_id = 'grandchild-pre';", nil, nil, nil), SQLITE_OK)
+
+        // First IDLE observation at tPostFinish + 2s starts the 6s seam -> expires at tPostFinish + 8s!
+        let rs2 = restartedScanner.scanDetailed(lookbackHours: 24, now: tPostFinish.addingTimeInterval(2))
+        XCTAssertEqual(rs2.sessions.first(where: { $0.rawId == "th-pre" })?.status, .running)
+        restartedStore.applyScanned(rs2.sessions, now: tPostFinish.addingTimeInterval(2))
+        XCTAssertEqual(restartedStore.confirmedCompletionIds, [])
+
+        // Past 6s seam from first IDLE observation (tPostFinish + 2s + 6s = tPostFinish + 8s) -> releases with post-launch completedAt & notifies!
+        let tAfterRestartSeam = tPostFinish.addingTimeInterval(9)
+        let rs3 = restartedScanner.scanDetailed(lookbackHours: 24, now: tAfterRestartSeam)
+        let preSession = try XCTUnwrap(rs3.sessions.first(where: { $0.rawId == "th-pre" }))
+        XCTAssertEqual(preSession.status, .done)
+        XCTAssertGreaterThanOrEqual(preSession.completedAt ?? .distantPast, restartLaunch)
+        XCTAssertEqual(preSession.completedAt?.timeIntervalSince(tPostFinish) ?? 99, 0, accuracy: 1.0)
+        restartedStore.applyScanned(rs3.sessions, now: tAfterRestartSeam)
+        let rs4 = restartedScanner.scanDetailed(lookbackHours: 24, now: tAfterRestartSeam.addingTimeInterval(5), forceFresh: true)
+        restartedStore.applyScanned(rs4.sessions, now: tAfterRestartSeam.addingTimeInterval(5))
+        XCTAssertEqual(restartedStore.confirmedCompletionIds, ["t3code:th-pre"])
+
+        XCTAssertEqual(sqlite3_close(v2DB), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(acpDB), SQLITE_OK)
+    }
+
+    @MainActor
+    func testT3CodeV2ACPFirstIdleAnchorUnpublishedRecipientAndKilledAncestorGuards() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumi-t3-acp-edge-\(UUID().uuidString)")
+        let providersRoot = dir.appendingPathComponent("providers/antigravity").path
+        let acpDir = "\(providersRoot)/profile1/antigravity-acp"
+        let subagentsDir = "\(acpDir)/brain/parent-sm/.system_generated/subagents"
+        try fm.createDirectory(atPath: subagentsDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let recipientId = "rec-sub-1"
+        try #"{"conversationId":"rec-sub-1","state":"SUBAGENT_STATE_ALIVE"}"#
+            .write(toFile: "\(subagentsDir)/\(recipientId).json", atomically: true, encoding: .utf8)
+
+        let v2Path = dir.appendingPathComponent("statev2.sqlite").path
+        let acpDbPath = "\(acpDir)/conversation_summaries.db"
+        var v2DB: OpaquePointer?
+        var acpDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(v2Path, &v2DB), SQLITE_OK)
+        XCTAssertEqual(sqlite3_open(acpDbPath, &acpDB), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func acpTS(_ d: Date) -> String {
+            iso.string(from: d).replacingOccurrences(of: "T", with: " ").replacingOccurrences(of: "Z", with: "+00:00")
+        }
+
+        let launch = Date()
+        let tStart = launch.addingTimeInterval(5)
+        let tTool = launch.addingTimeInterval(15)
+        let tEnd = launch.addingTimeInterval(20)
+
+        let v2Sql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+            default_provider TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+            provider TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL,
+            completed_at TEXT, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+            ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL,
+            updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider TEXT NOT NULL, payload_json TEXT NOT NULL
+        );
+        CREATE TABLE provider_session_runtime (thread_id TEXT PRIMARY KEY, provider_name TEXT, status TEXT NOT NULL, resume_cursor_json TEXT);
+
+        INSERT INTO projection_projects VALUES ('p1', 'Proj', '/Users/test/proj');
+
+        -- Case A: Cache-hit ticks before first IDLE observation with UNCHANGED last_modified_time
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-cache', 'p1', 'Cache hit seam', 'antigravity', '\(iso.string(from: tStart))', '\(iso.string(from: tEnd))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-cache","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-cache', 'th-cache', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-cache"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-cache', 'th-cache', 1, 'antigravity', 'completed', '\(iso.string(from: tStart))', '\(iso.string(from: tEnd))',
+             '{"providerThreadId":"pt-cache","providerInstanceId":"antigravity"}');
+
+        -- Case B: send_message where parent is IDLE/0 but recipient subagent is NOT yet published/updated -> must keep 150s fallback!
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-sm', 'p1', 'SendMsg unpublished rec', 'antigravity', '\(iso.string(from: tStart))', '\(iso.string(from: tEnd))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-sm","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-sm', 'th-sm', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-sm"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-sm', 'th-sm', 1, 'antigravity', 'completed', '\(iso.string(from: tStart))', '\(iso.string(from: tEnd))',
+             '{"providerThreadId":"pt-sm","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_turn_items VALUES
+            ('it-sm', 'th-sm', 'run-sm', 101, 'dynamic_tool', 'completed', '\(iso.string(from: tTool))',
+             '{"toolName":"Run send_message","completedAt":"\(iso.string(from: tTool))","nativeItemRef":{"nativeId":"call_sm"},"input":{"Recipient":"\(recipientId)","Message":"check"}}');
+
+        -- Case C: Killed RUNNING intermediate ancestor backfilled via PK -> MUST NOT reactivate root!
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('th-killed', 'p1', 'Killed ancestor guard', 'antigravity', '\(iso.string(from: tStart))', '\(iso.string(from: tEnd))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-killed","providerInstanceId":"antigravity"}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-killed', 'th-killed', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"root-killed"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-killed', 'th-killed', 1, 'antigravity', 'completed', '\(iso.string(from: tStart))', '\(iso.string(from: tEnd))',
+             '{"providerThreadId":"pt-killed","providerInstanceId":"antigravity"}');
+        """
+        XCTAssertEqual(sqlite3_exec(v2DB, v2Sql, nil, nil, nil), SQLITE_OK)
+
+        let acpSql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            parent_conversation_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            not_fully_idle INTEGER NOT NULL DEFAULT 0,
+            killed INTEGER NOT NULL DEFAULT 0,
+            last_modified_time TEXT NOT NULL
+        );
+        INSERT INTO conversation_summaries VALUES
+            ('parent-cache', '', 'CASCADE_RUN_STATUS_RUNNING', 1, 0, '\(acpTS(tEnd))'),
+            ('parent-sm', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tEnd))'),
+            -- Recipient subagent lastModified is OLDER than send_message toolCompletedAt -> has NOT finished new work yet!
+            ('\(recipientId)', 'parent-sm', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tStart))'),
+            -- Killed intermediate RUNNING ancestor with IDLE root and IDLE leaf (backfilled by PK!)
+            ('root-killed', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tEnd))'),
+            ('mid-killed', 'root-killed', 'CASCADE_RUN_STATUS_RUNNING', 1, 1, '\(acpTS(tEnd))'),
+            ('leaf-idle', 'mid-killed', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tEnd))'),
+            -- Cycle A <-> B (must not infinite-loop or misattribute)
+            ('cyc-a', 'cyc-b', 'CASCADE_RUN_STATUS_RUNNING', 1, 0, '\(acpTS(tEnd))'),
+            ('cyc-b', 'cyc-a', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tEnd))');
+        """
+        XCTAssertEqual(sqlite3_exec(acpDB, acpSql, nil, nil, nil), SQLITE_OK)
+
+        let scanner = T3CodeScanner(
+            v2DbPath: v2Path,
+            v1DbPath: dir.appendingPathComponent("none.sqlite").path,
+            antigravityProvidersRoot: providersRoot,
+            handoffGraceSeconds: 150.0,
+            acpIdleSeamSeconds: 12.0,
+            launchTime: launch,
+            isT3RunningCheck: { true }
+        )
+
+        // Tick at tEnd+0: parent-cache is RUNNING, parent-sm is held by 150s fallback, root-killed is .done (NOT reactivated by killed mid!)
+        let s0 = scanner.scan(lookbackHours: 24, now: tEnd)
+        XCTAssertEqual(s0.first(where: { $0.rawId == "th-cache" })?.status, .running)
+        XCTAssertEqual(s0.first(where: { $0.rawId == "th-sm" })?.status, .running)
+        XCTAssertEqual(s0.first(where: { $0.rawId == "th-killed" })?.status, .done)
+
+        // Simulate cache-hit ticks from +1.5s to +10.5s (no DB writes!)
+        for step in stride(from: 1.5, through: 10.5, by: 1.5) {
+            let sHit = scanner.scan(lookbackHours: 24, now: tEnd.addingTimeInterval(step))
+            XCTAssertEqual(sHit.first(where: { $0.rawId == "th-cache" })?.status, .running)
+        }
+
+        // At tEnd + 12.0s: parent-cache flips IDLE WITHOUT advancing last_modified_time!
+        // Seam MUST start from first IDLE observation (tEnd + 12.0s -> expires at tEnd + 24.0s), NOT expire immediately!
+        XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0 WHERE conversation_id = 'parent-cache';", nil, nil, nil), SQLITE_OK)
+
+        let s12 = scanner.scan(lookbackHours: 24, now: tEnd.addingTimeInterval(12.0))
+        XCTAssertEqual(s12.first(where: { $0.rawId == "th-cache" })?.status, .running, "First IDLE observation must start fresh 12s seam!")
+        let s20 = scanner.scan(lookbackHours: 24, now: tEnd.addingTimeInterval(20.0))
+        XCTAssertEqual(s20.first(where: { $0.rawId == "th-cache" })?.status, .running, "Must stay held inside 12s seam from first IDLE!")
+        let s25 = scanner.scan(lookbackHours: 24, now: tEnd.addingTimeInterval(25.0))
+        XCTAssertEqual(s25.first(where: { $0.rawId == "th-cache" })?.status, .done, "Must release after 12s seam from first IDLE!")
+
+        // Case B: At tEnd + 30s (PAST 20s!) recipient still hasn't updated past tTool -> th-sm MUST STILL be .running under full 150s fallback!
+        let s30 = scanner.scan(lookbackHours: 24, now: tEnd.addingTimeInterval(30.0))
+        XCTAssertEqual(s30.first(where: { $0.rawId == "th-sm" })?.status, .running)
+
+        // Once recipient finishes and updates last_modified_time >= tTool -> th-sm now has confirmed recipient IDLE and releases!
+        XCTAssertEqual(sqlite3_exec(acpDB, "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0, last_modified_time = '\(acpTS(tEnd.addingTimeInterval(25)))' WHERE conversation_id = '\(recipientId)';", nil, nil, nil), SQLITE_OK)
+        let s31 = scanner.scan(lookbackHours: 24, now: tEnd.addingTimeInterval(31.0))
+        XCTAssertEqual(s31.first(where: { $0.rawId == "th-sm" })?.status, .done)
+
+        // --- Case D: Run 42->43 dual-command shadow test where ACP is ALREADY IDLE/0 from tick 0 (NEVER sampled active!) ---
+        // Order: (1) earlier verified background command (`ord=4201`, 15.5s, has `task-1380.log`),
+        // followed by (2) a LATER 11s synchronous command (`ord=4202`, NO task log!) — the unverified later sync command
+        // MUST NOT shadow the earlier verified background command!
+        let bgTasksDir = "\(acpDir)/brain/parent-bg-never-active/.system_generated/tasks"
+        try fm.createDirectory(atPath: bgTasksDir, withIntermediateDirectories: true)
+        let tBgRunStart = tEnd.addingTimeInterval(40)
+        let tBgCmdStart = tEnd.addingTimeInterval(42)
+        let tBgCmdEnd = tEnd.addingTimeInterval(57.5)      // 15.5s backgrounded command (`task-1380.log`)
+        let tLaterSyncStart = tEnd.addingTimeInterval(60)  // later 11s synchronous command (window starts +58.0s > +57.5s task log!)
+        let tLaterSyncEnd = tEnd.addingTimeInterval(71.0)
+        let tBgRunEnd = tEnd.addingTimeInterval(73.4)      // 15.9s after bg cmd, 2.4s after later sync cmd
+        let taskLogPath = "\(bgTasksDir)/task-1380.log"
+        try "background command output".write(toFile: taskLogPath, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.modificationDate: tBgCmdEnd], ofItemAtPath: taskLogPath)
+
+        XCTAssertEqual(sqlite3_exec(v2DB, """
+            INSERT INTO orchestration_v2_projection_threads VALUES
+                ('th-bg-idle', 'p1', 'Run 42 dual-cmd never-sampled ACP', 'antigravity', '\(iso.string(from: tBgRunStart))', '\(iso.string(from: tBgRunEnd))', NULL, NULL,
+                 '{"activeProviderThreadId":"pt-bgi","providerInstanceId":"antigravity"}'),
+                ('th-sync-cmd', 'p1', 'Sync 1.5s cmd', 'antigravity', '\(iso.string(from: tBgRunStart))', '\(iso.string(from: tBgRunEnd))', NULL, NULL,
+                 '{"activeProviderThreadId":"pt-sync","providerInstanceId":"antigravity"}');
+            INSERT INTO orchestration_v2_projection_provider_threads VALUES
+                ('pt-bgi', 'th-bg-idle', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-bg-never-active"}}'),
+                ('pt-sync', 'th-sync-cmd', 'antigravity', '{"providerInstanceId":"antigravity","nativeThreadRef":{"driver":"antigravity","nativeId":"parent-sync"}}');
+            INSERT INTO orchestration_v2_projection_runs VALUES
+                ('run-bg-42', 'th-bg-idle', 42, 'antigravity', 'completed', '\(iso.string(from: tBgRunStart))', '\(iso.string(from: tBgRunEnd))',
+                 '{"providerThreadId":"pt-bgi","providerInstanceId":"antigravity"}'),
+                ('run-sync', 'th-sync-cmd', 1, 'antigravity', 'completed', '\(iso.string(from: tBgRunStart))', '\(iso.string(from: tBgRunEnd))',
+                 '{"providerThreadId":"pt-sync","providerInstanceId":"antigravity"}');
+            INSERT INTO orchestration_v2_projection_turn_items VALUES
+                ('it-bg-cmd', 'th-bg-idle', 'run-bg-42', 4201, 'command_execution', 'completed', '\(iso.string(from: tBgCmdEnd))',
+                 '{"startedAt":"\(iso.string(from: tBgCmdStart))","completedAt":"\(iso.string(from: tBgCmdEnd))","nativeItemRef":{"nativeId":"call_bg_42"}}'),
+                ('it-later-sync', 'th-bg-idle', 'run-bg-42', 4202, 'command_execution', 'completed', '\(iso.string(from: tLaterSyncEnd))',
+                 '{"startedAt":"\(iso.string(from: tLaterSyncStart))","completedAt":"\(iso.string(from: tLaterSyncEnd))","nativeItemRef":{"nativeId":"call_later_sync"}}'),
+                ('it-sync-cmd', 'th-sync-cmd', 'run-sync', 101, 'command_execution', 'completed', '\(iso.string(from: tBgCmdEnd))',
+                 '{"startedAt":"\(iso.string(from: tBgCmdEnd.addingTimeInterval(-1.5)))","completedAt":"\(iso.string(from: tBgCmdEnd))","nativeItemRef":{"nativeId":"call_sync"}}');
+            """, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(acpDB, """
+            INSERT INTO conversation_summaries VALUES
+                ('parent-bg-never-active', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tBgRunEnd))'),
+                ('parent-sync', '', 'CASCADE_RUN_STATUS_IDLE', 0, 0, '\(acpTS(tBgRunEnd))');
+            """, nil, nil, nil), SQLITE_OK)
+
+        let bgStore = MonitorStore(statePath: dir.appendingPathComponent("read_state_bg.json").path, launchTime: launch, suppressSystemSideEffects: true)
+        bgStore.applyScanned([], now: launch)
+
+        // Tick every 1.5s across the 14.07s gap until Run 43 starts at +14.1s and finishes at +21s!
+        // th-sync-cmd (normal 1.5s sync cmd) MUST confirm right after 4.5s; th-bg-idle MUST stay held until Run 43 completes!
+        var bgOffset: TimeInterval = 1.5
+        var didInsert43 = false
+        var didComplete43 = false
+        while bgOffset <= 27.0 {
+            let tickNow = tBgRunEnd.addingTimeInterval(bgOffset)
+            if !didInsert43 && bgOffset >= 14.1 {
+                didInsert43 = true
+                XCTAssertEqual(sqlite3_exec(v2DB, """
+                    INSERT INTO orchestration_v2_projection_runs VALUES
+                        ('run-bg-43', 'th-bg-idle', 43, 'antigravity', 'running', '\(iso.string(from: tickNow))', NULL, '{"providerThreadId":"pt-bgi","providerInstanceId":"antigravity"}');
+                    UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: tickNow))' WHERE thread_id = 'th-bg-idle';
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+            if !didComplete43 && bgOffset >= 21.0 {
+                didComplete43 = true
+                XCTAssertEqual(sqlite3_exec(v2DB, """
+                    UPDATE orchestration_v2_projection_runs SET status = 'completed', completed_at = '\(iso.string(from: tickNow))' WHERE run_id = 'run-bg-43';
+                    UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: tickNow))' WHERE thread_id = 'th-bg-idle';
+                    """, nil, nil, nil), SQLITE_OK)
+            }
+            let r = scanner.scanDetailed(lookbackHours: 24, now: tickNow, forceFresh: true)
+            bgStore.applyScanned(r.sessions, now: tickNow)
+            if bgOffset < 21.0 {
+                XCTAssertFalse(bgStore.confirmedCompletionIds.contains("t3code:th-bg-idle"), "Premature popup on never-sampled-active Run 42 at +\(bgOffset)s")
+            }
+            bgOffset += 1.5
+        }
+        XCTAssertTrue(bgStore.confirmedCompletionIds.contains("t3code:th-sync-cmd"), "Normal 1.5s sync command must confirm without extra delay!")
+        XCTAssertEqual(bgStore.confirmedCompletionIds.filter { $0 == "t3code:th-bg-idle" }.count, 1)
+
+        // --- Case E: `forceFresh: true` bypasses `terminalRunDetailCache` when an approval item is appended to a freshly completed run ---
+        XCTAssertEqual(sqlite3_exec(v2DB, """
+            INSERT INTO orchestration_v2_projection_turn_items VALUES
+                ('it-late-appr', 'th-sync-cmd', 'run-sync', 102, 'approval_request', 'pending', '\(iso.string(from: tBgRunEnd.addingTimeInterval(28)))',
+                 '{"command":"deploy"}');
+            """, nil, nil, nil), SQLITE_OK)
+        let rLateAppr = scanner.scanDetailed(lookbackHours: 24, now: tBgRunEnd.addingTimeInterval(28), forceFresh: true)
+        XCTAssertEqual(rLateAppr.sessions.first(where: { $0.rawId == "th-sync-cmd" })?.status, .needsInput, "forceFresh must bypass terminalRunDetailCache!")
+
+        XCTAssertEqual(sqlite3_close(v2DB), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(acpDB), SQLITE_OK)
     }
 }

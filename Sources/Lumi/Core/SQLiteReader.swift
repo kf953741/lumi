@@ -76,13 +76,14 @@ final class SQLiteReader {
     }
 
     /// Runs multiple related SELECT statements inside a single consistent read-only snapshot.
-    func withReadTransaction<T>(_ body: () -> T) -> T {
-        guard let db else { return body() }
-        let began = sqlite3_exec(db, "BEGIN DEFERRED;", nil, nil, nil) == SQLITE_OK
+    /// Returns nil if the database handle is unavailable or `BEGIN DEFERRED` fails (e.g. transient busy/lock).
+    func withReadTransaction<T>(_ body: () -> T?) -> T? {
+        guard let db else { return nil }
+        guard sqlite3_exec(db, "BEGIN DEFERRED;", nil, nil, nil) == SQLITE_OK else {
+            return nil
+        }
         defer {
-            if began {
-                sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
-            }
+            sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
         }
         return body()
     }
@@ -107,6 +108,18 @@ final class SQLiteReader {
         var found = false
         let ok = query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='\(escaped)' LIMIT 1;") { _ in
             found = true
+        }
+        return ok && found
+    }
+
+    /// Returns true if `column` exists in `table` (distinguishes older/minimal schemas from transient SQLite read errors).
+    func hasColumn(_ column: String, in table: String) -> Bool {
+        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
+        var found = false
+        let ok = query("PRAGMA table_info('\(escapedTable)');") { stmt in
+            if Self.string(stmt, 1) == column {
+                found = true
+            }
         }
         return ok && found
     }
