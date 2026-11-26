@@ -447,8 +447,20 @@ final class T3CodeScanner: @unchecked Sendable {
         let worktreePath: String
         let parentThreadId: String?
         let rootThreadId: String?
+        let relationshipToParent: String?
+        let isSideChat: Bool
         let activeProviderThreadId: String?
         let providerInstanceId: String?
+
+        /// True only for internal child subagents/delegated tasks that should roll up onto their
+        /// owning conversation. User-facing side chats (`sideChat: true`) and regular user forks
+        /// (`relationshipToParent == "fork"`) are independent visible conversations, never rolled-up children.
+        var isRolledUpChild: Bool {
+            guard parentThreadId != nil else { return false }
+            if isSideChat { return false }
+            if relationshipToParent == "fork" { return false }
+            return true
+        }
     }
 
     private struct V2Run {
@@ -1100,8 +1112,10 @@ final class T3CodeScanner: @unchecked Sendable {
             let payload = Self.parseJSONObject(payloadStr)
             let worktree = payload["worktreePath"] as? String ?? ""
             let lineage = payload["lineage"] as? [String: Any]
-            let parentTid = lineage?["parentThreadId"] as? String
-            let rootTid = lineage?["rootThreadId"] as? String
+            let parentTid = (lineage?["parentThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rootTid = (lineage?["rootThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let relRaw = (lineage?["relationshipToParent"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let isSideChat = (lineage?["sideChat"] as? Bool) == true
             let activePt = (payload["activeProviderThreadId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let provInst = (payload["providerInstanceId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1117,6 +1131,8 @@ final class T3CodeScanner: @unchecked Sendable {
                 worktreePath: worktree,
                 parentThreadId: (parentTid?.isEmpty == false) ? parentTid : nil,
                 rootThreadId: (rootTid?.isEmpty == false) ? rootTid : nil,
+                relationshipToParent: (relRaw?.isEmpty == false) ? relRaw : nil,
+                isSideChat: isSideChat,
                 activeProviderThreadId: (activePt?.isEmpty == false) ? activePt : nil,
                 providerInstanceId: (provInst?.isEmpty == false) ? provInst : nil
             )
@@ -1152,29 +1168,38 @@ final class T3CodeScanner: @unchecked Sendable {
             missingThreadIds.insert(row.threadId)
         }
 
-        func fetchMissingThreads(_ ids: Set<String>) {
-            guard !ids.isEmpty else { return }
+        func fetchMissingThreads(_ ids: Set<String>) -> Bool {
+            guard !ids.isEmpty else { return true }
             let inClause = ids.map { Self.sqlLiteral($0) }.joined(separator: ",")
-            _ = reader.query("""
+            return reader.query("""
                 SELECT thread_id, project_id, title, default_provider, created_at, updated_at, payload_json
                 FROM orchestration_v2_projection_threads
                 WHERE deleted_at IS NULL AND archived_at IS NULL
                   AND thread_id IN (\(inClause));
                 """, rowHandler: appendThreadRow)
         }
-        fetchMissingThreads(missingThreadIds)
+        guard fetchMissingThreads(missingThreadIds) else { return nil }
 
-        // Ensure parents/roots of any loaded child threads are also loaded before rollup
-        var missingParents = Set<String>()
-        for th in threadsById.values {
-            if let rootId = th.rootThreadId, threadsById[rootId] == nil { missingParents.insert(rootId) }
-            if let parentId = th.parentThreadId, threadsById[parentId] == nil { missingParents.insert(parentId) }
+        // Ensure multi-hop parents/roots of any loaded child or side-chat threads are loaded before owner rollup
+        var attemptedAncestors = Set<String>()
+        for _ in 0..<6 {
+            var missingParents = Set<String>()
+            for th in threadsById.values {
+                if let parentId = th.parentThreadId, threadsById[parentId] == nil, !attemptedAncestors.contains(parentId) {
+                    missingParents.insert(parentId)
+                }
+                if let rootId = th.rootThreadId, threadsById[rootId] == nil, !attemptedAncestors.contains(rootId) {
+                    missingParents.insert(rootId)
+                }
+            }
+            guard !missingParents.isEmpty else { break }
+            attemptedAncestors.formUnion(missingParents)
+            guard fetchMissingThreads(missingParents) else { return nil }
         }
-        fetchMissingThreads(missingParents)
 
         let threads = threadOrder.compactMap { threadsById[$0] }
 
-        // Group actionable pending runtime requests by threadId (and roll up child -> root below)
+        // Group actionable pending runtime requests by threadId (and roll up child -> owning conversation below)
         var actionableRequestByThread: [String: V2RuntimeRequestRow] = [:]
         for req in pendingRequestRows {
             guard threadsById[req.threadId] != nil else { continue }
@@ -1183,66 +1208,76 @@ final class T3CodeScanner: @unchecked Sendable {
             }
         }
 
-        // Separate root threads vs child subagent threads so child runs roll up cleanly onto their root thread
-        var childRunningByRoot: [String: Int] = [:]
-        var activeChildThreadIdsByRoot: [String: Set<String>] = [:]
-        var childNeedsInputByRoot: [String: String] = [:]
-        var childThreadIdsByRoot: [String: [String]] = [:]
-        var rootThreads: [V2Thread] = []
+        /// Resolves the nearest non-rolled-up owning conversation (root thread, side chat, or user fork)
+        /// by walking up `parentThreadId` across rolled-up subagent hops.
+        /// Returns `nil` on unknown/deleted/archived direct parents, cycles, or depth overflow.
+        func resolveOwnerThreadId(for threadId: String) -> String? {
+            var cur = threadId
+            var visited = Set<String>()
+            for _ in 0..<8 {
+                guard visited.insert(cur).inserted, let th = threadsById[cur] else {
+                    return nil
+                }
+                guard th.isRolledUpChild, let parentId = th.parentThreadId else {
+                    return th.threadId
+                }
+                cur = parentId
+            }
+            return nil
+        }
+
+        // Separate visible owning conversations (roots, side chats, user forks) vs rolled-up child subagent threads
+        var childRunningByOwner: [String: Int] = [:]
+        var activeChildThreadIdsByOwner: [String: Set<String>] = [:]
+        var childNeedsInputByOwner: [String: String] = [:]
+        var childThreadIdsByOwner: [String: [String]] = [:]
+        var ownerThreads: [V2Thread] = []
 
         for th in threads {
-            if let parentId = th.parentThreadId {
-                let rootKey = th.rootThreadId ?? parentId
-                childThreadIdsByRoot[rootKey, default: []].append(th.threadId)
+            if th.isRolledUpChild {
+                guard let ownerKey = resolveOwnerThreadId(for: th.threadId) else { continue }
+                childThreadIdsByOwner[ownerKey, default: []].append(th.threadId)
                 let childRun = latestRuns[th.threadId]
                 let childExplicitWaiting = explicitWaitingRuntimeThreads.contains(th.threadId)
                 let childRunningRuntime = runningRuntimeThreads.contains(th.threadId)
                 if let req = actionableRequestByThread[th.threadId] {
-                    childNeedsInputByRoot[rootKey] = req.prompt
+                    childNeedsInputByOwner[ownerKey] = req.prompt
                 } else if let run = childRun {
                     if Self.isExplicitApprovalStatus(run.status) || childExplicitWaiting {
                         guard let detail = inspectV2Run(reader: reader, threadId: th.threadId, runId: run.runId, includeHandoffScan: false) else {
                             return nil
                         }
-                        childNeedsInputByRoot[rootKey] = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
+                        childNeedsInputByOwner[ownerKey] = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
                     } else if Self.isActiveRunStatus(run.status) || Self.isGenericWaitingStatus(run.status) || childRunningRuntime {
                         guard let detail = inspectV2Run(reader: reader, threadId: th.threadId, runId: run.runId, includeHandoffScan: false) else {
                             return nil
                         }
                         if detail.hasPendingApproval {
-                            childNeedsInputByRoot[rootKey] = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
+                            childNeedsInputByOwner[ownerKey] = detail.pendingPrompt.isEmpty ? "等待你的审批或回复" : detail.pendingPrompt
                         } else {
-                            childRunningByRoot[rootKey, default: 0] += 1
-                            activeChildThreadIdsByRoot[rootKey, default: []].insert(th.threadId)
+                            childRunningByOwner[ownerKey, default: 0] += 1
+                            activeChildThreadIdsByOwner[ownerKey, default: []].insert(th.threadId)
                         }
                     }
                 } else if childExplicitWaiting {
-                    childNeedsInputByRoot[rootKey] = "等待你的审批或回复"
+                    childNeedsInputByOwner[ownerKey] = "等待你的审批或回复"
                 } else if childRunningRuntime {
-                    childRunningByRoot[rootKey, default: 0] += 1
-                    activeChildThreadIdsByRoot[rootKey, default: []].insert(th.threadId)
+                    childRunningByOwner[ownerKey, default: 0] += 1
+                    activeChildThreadIdsByOwner[ownerKey, default: []].insert(th.threadId)
                 }
                 continue
             }
-            rootThreads.append(th)
+            ownerThreads.append(th)
         }
 
-        // Roll up P0-A pendingBackgroundTasks & P0-B subagents onto root threads with owner verification + dedupe
-        var blockingCountByRoot: [String: Int] = [:]
-        var blockingActivityByRoot: [String: Date] = [:]
-        var seenBlockingKeysByRoot: [String: Set<String>] = [:]
-
-        func resolveRootKey(for threadId: String) -> String? {
-            guard let th = threadsById[threadId] else { return nil }
-            if let parentId = th.parentThreadId {
-                return th.rootThreadId ?? parentId
-            }
-            return th.threadId
-        }
+        // Roll up P0-A pendingBackgroundTasks & P0-B subagents onto owning conversations with owner verification + dedupe
+        var blockingCountByOwner: [String: Int] = [:]
+        var blockingActivityByOwner: [String: Date] = [:]
+        var seenBlockingKeysByOwner: [String: Set<String>] = [:]
 
         for task in pendingTaskRows {
             guard let ownerThread = threadsById[task.threadId],
-                  let rootKey = resolveRootKey(for: task.threadId) else { continue }
+                  let ownerKey = resolveOwnerThreadId(for: task.threadId) else { continue }
             if let activePt = ownerThread.activeProviderThreadId, !task.providerThreadId.isEmpty, activePt != task.providerThreadId {
                 continue
             }
@@ -1255,21 +1290,21 @@ final class T3CodeScanner: @unchecked Sendable {
                !Self.isActiveRunStatus(childRun.status) && !Self.isExplicitApprovalStatus(childRun.status) && !Self.isGenericWaitingStatus(childRun.status) {
                 continue
             }
-            if !task.childThreadId.isEmpty && (activeChildThreadIdsByRoot[rootKey]?.contains(task.childThreadId) == true) {
+            if !task.childThreadId.isEmpty && (activeChildThreadIdsByOwner[ownerKey]?.contains(task.childThreadId) == true) {
                 continue
             }
             let dedupeKey = !task.childThreadId.isEmpty ? "child:\(task.childThreadId)" : "task:\(task.taskId.isEmpty ? task.kind : task.taskId)"
-            if seenBlockingKeysByRoot[rootKey, default: []].insert(dedupeKey).inserted {
-                blockingCountByRoot[rootKey, default: 0] += 1
-                if let at = task.updatedAt, blockingActivityByRoot[rootKey] == nil || at > blockingActivityByRoot[rootKey]! {
-                    blockingActivityByRoot[rootKey] = at
+            if seenBlockingKeysByOwner[ownerKey, default: []].insert(dedupeKey).inserted {
+                blockingCountByOwner[ownerKey, default: 0] += 1
+                if let at = task.updatedAt, blockingActivityByOwner[ownerKey] == nil || at > blockingActivityByOwner[ownerKey]! {
+                    blockingActivityByOwner[ownerKey] = at
                 }
             }
         }
 
         for sub in activeSubagentRows {
             guard let ownerThread = threadsById[sub.threadId],
-                  let rootKey = resolveRootKey(for: sub.threadId) else { continue }
+                  let ownerKey = resolveOwnerThreadId(for: sub.threadId) else { continue }
             if let ownerInst = ownerThread.providerInstanceId, !sub.providerInstanceId.isEmpty, ownerInst != sub.providerInstanceId {
                 continue
             }
@@ -1297,21 +1332,21 @@ final class T3CodeScanner: @unchecked Sendable {
                !Self.isActiveRunStatus(childRun.status) && !Self.isExplicitApprovalStatus(childRun.status) && !Self.isGenericWaitingStatus(childRun.status) {
                 continue
             }
-            if !sub.childThreadId.isEmpty && (activeChildThreadIdsByRoot[rootKey]?.contains(sub.childThreadId) == true) {
+            if !sub.childThreadId.isEmpty && (activeChildThreadIdsByOwner[ownerKey]?.contains(sub.childThreadId) == true) {
                 continue
             }
             let dedupeKey = !sub.childThreadId.isEmpty ? "child:\(sub.childThreadId)" : "sub:\(sub.runId):\(sub.threadId)"
-            if seenBlockingKeysByRoot[rootKey, default: []].insert(dedupeKey).inserted {
-                blockingCountByRoot[rootKey, default: 0] += 1
-                if let at = sub.latestAt, blockingActivityByRoot[rootKey] == nil || at > blockingActivityByRoot[rootKey]! {
-                    blockingActivityByRoot[rootKey] = at
+            if seenBlockingKeysByOwner[ownerKey, default: []].insert(dedupeKey).inserted {
+                blockingCountByOwner[ownerKey, default: 0] += 1
+                if let at = sub.latestAt, blockingActivityByOwner[ownerKey] == nil || at > blockingActivityByOwner[ownerKey]! {
+                    blockingActivityByOwner[ownerKey] = at
                 }
             }
         }
 
         // 5. Inspect nodes & turn items only for recent or active runs (caching terminal completed runs including handoff metadata)
         var runDetails: [String: V2RunDetail] = [:]
-        for th in rootThreads {
+        for th in ownerThreads {
             guard let run = latestRuns[th.threadId] else { continue }
             let isPotentiallyActive = Self.isActiveRunStatus(run.status)
                 || Self.isExplicitApprovalStatus(run.status)
@@ -1319,7 +1354,7 @@ final class T3CodeScanner: @unchecked Sendable {
                 || runningRuntimeThreads.contains(th.threadId)
                 || explicitWaitingRuntimeThreads.contains(th.threadId)
                 || actionableRequestByThread[th.threadId] != nil
-                || (blockingCountByRoot[th.threadId] ?? 0) > 0
+                || (blockingCountByOwner[th.threadId] ?? 0) > 0
             let isAntigravityGraceCandidate: Bool = {
                 guard appRunning && handoffGraceSeconds > 0,
                       run.status == "completed",
@@ -1365,16 +1400,20 @@ final class T3CodeScanner: @unchecked Sendable {
 
         // 6. Build AgentSession list FIRST so we know exactly which threads are actually visible
         var sessions: [AgentSession] = []
-        var emittedRootThreadIds = Set<String>()
+        var emittedOwnerThreadIds = Set<String>()
         var pendingCandidates: [(threadId: String, providerKey: String, normalizedCwd: String, startedAt: Date)] = []
         var antigravitySessionIndices: [(sessionIndex: Int, threadId: String, run: V2Run)] = []
         var handoffCandidateIndices: [(sessionIndex: Int, threadId: String, run: V2Run, completedAt: Date, tools: [V2HandoffTool])] = []
 
-        for th in rootThreads {
+        for th in ownerThreads {
             let run = latestRuns[th.threadId]
             let runtimeActive = runningRuntimeThreads.contains(th.threadId)
             let runtimeExplicitWaiting = explicitWaitingRuntimeThreads.contains(th.threadId)
             let rootActionableReq = actionableRequestByThread[th.threadId]
+            let childRunning = childRunningByOwner[th.threadId] ?? 0
+            let structuredBlocking = blockingCountByOwner[th.threadId] ?? 0
+            let totalBackgroundRunning = childRunning + structuredBlocking
+            let childNeedsPrompt = childNeedsInputByOwner[th.threadId]
 
             // Skip untouched imported threads (e.g. `import:codex:<uuid>`) that have never run in T3 Code,
             // preventing duplicates of threads already shown by CodexScanner / ClaudeScanner.
@@ -1382,13 +1421,21 @@ final class T3CodeScanner: @unchecked Sendable {
                 continue
             }
 
-            let detail = run.flatMap { runDetails[$0.runId] } ?? V2RunDetail()
-            let childRunning = childRunningByRoot[th.threadId] ?? 0
-            let structuredBlocking = blockingCountByRoot[th.threadId] ?? 0
-            let totalBackgroundRunning = childRunning + structuredBlocking
-            let childNeedsPrompt = childNeedsInputByRoot[th.threadId]
+            // Skip freshly opened empty side chats / user forks before their first turn starts so merely opening
+            // the side chat panel (or creating an idle fork) never shows up as a fake completed task or fires a popup.
+            if (th.isSideChat || th.relationshipToParent == "fork")
+                && run == nil
+                && !runtimeActive
+                && !runtimeExplicitWaiting
+                && rootActionableReq == nil
+                && totalBackgroundRunning == 0
+                && childNeedsPrompt == nil {
+                continue
+            }
 
-            let activityCandidates: [Date] = [th.updatedAt, run?.requestedAt, run?.completedAt, detail.latestActivityAt, blockingActivityByRoot[th.threadId], rootActionableReq?.createdAt]
+            let detail = run.flatMap { runDetails[$0.runId] } ?? V2RunDetail()
+
+            let activityCandidates: [Date] = [th.updatedAt, run?.requestedAt, run?.completedAt, detail.latestActivityAt, blockingActivityByOwner[th.threadId], rootActionableReq?.createdAt]
                 .compactMap { $0 }
                 .filter { $0 > .distantPast }
             let latestActivity = activityCandidates.max() ?? th.updatedAt
@@ -1460,7 +1507,20 @@ final class T3CodeScanner: @unchecked Sendable {
             let cwd = !th.worktreePath.isEmpty ? th.worktreePath : (proj?.workspaceRoot ?? "")
             let projectName = Self.resolveProjectName(project: proj, worktreePath: th.worktreePath)
             let cleanTitle = ProjectNameHelper.cleanOneLine(th.title, maxLength: 78)
-            let displayTitle = cleanTitle.isEmpty ? (projectName.isEmpty ? "T3 Code 对话" : projectName) : cleanTitle
+            let displayTitle: String
+            if th.isSideChat {
+                let isPlaceholder = cleanTitle.isEmpty || cleanTitle.caseInsensitiveCompare("Side chat") == .orderedSame
+                if !isPlaceholder {
+                    displayTitle = "侧聊 · \(cleanTitle)"
+                } else if let pid = th.parentThreadId, let parentRaw = threadsById[pid]?.title {
+                    let parentClean = ProjectNameHelper.cleanOneLine(parentRaw, maxLength: 70)
+                    displayTitle = parentClean.isEmpty ? "侧聊" : "侧聊 · \(parentClean)"
+                } else {
+                    displayTitle = projectName.isEmpty ? "侧聊" : "侧聊 · \(projectName)"
+                }
+            } else {
+                displayTitle = cleanTitle.isEmpty ? (projectName.isEmpty ? "T3 Code 对话" : projectName) : cleanTitle
+            }
 
             let startedAt = run?.requestedAt ?? (th.createdAt > .distantPast ? th.createdAt : nil)
             let completedAt: Date? = isActive ? nil : (run?.completedAt ?? (latestActivity > .distantPast ? latestActivity : nil))
@@ -1472,7 +1532,7 @@ final class T3CodeScanner: @unchecked Sendable {
 
             let activeSubs = max(detail.activeSubagents, totalBackgroundRunning)
 
-            emittedRootThreadIds.insert(th.threadId)
+            emittedOwnerThreadIds.insert(th.threadId)
 
             if isActive,
                let provKey = Self.normalizeProviderKey(run?.provider ?? th.defaultProvider),
@@ -1544,9 +1604,9 @@ final class T3CodeScanner: @unchecked Sendable {
 
         // 7. Map ONLY emitted T3 threads (and their rolled-up child threads) to underlying native session IDs.
         //    Archived, deleted, out-of-window, or untouched imported threads never suppress standalone sessions.
-        var ownedThreadIds = emittedRootThreadIds
-        for rootId in emittedRootThreadIds {
-            if let children = childThreadIdsByRoot[rootId] {
+        var ownedThreadIds = emittedOwnerThreadIds
+        for ownerId in emittedOwnerThreadIds {
+            if let children = childThreadIdsByOwner[ownerId] {
                 ownedThreadIds.formUnion(children)
             }
         }

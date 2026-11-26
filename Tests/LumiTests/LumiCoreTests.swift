@@ -2352,4 +2352,190 @@ final class LumiCoreTests: XCTestCase {
         XCTAssertEqual(sqlite3_close(v2DB), SQLITE_OK)
         XCTAssertEqual(sqlite3_close(acpDB), SQLITE_OK)
     }
+
+    @MainActor
+    func testT3CodeV2SideChatAndForkLifecycleCompletionAndSubagentRollup() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lumi-t3-sidechat-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let v2Path = dir.appendingPathComponent("statev2.sqlite").path
+        let envPath = dir.appendingPathComponent("environment-id").path
+        try "env-sidechat-test\n".write(toFile: envPath, atomically: true, encoding: .utf8)
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(v2Path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        let schema = """
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, workspace_root TEXT);
+        CREATE TABLE orchestration_v2_projection_threads (
+            thread_id TEXT PRIMARY KEY, project_id TEXT, title TEXT, default_provider TEXT,
+            created_at TEXT, updated_at TEXT, archived_at TEXT, deleted_at TEXT, payload_json TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_runs (
+            run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, provider TEXT, status TEXT,
+            requested_at TEXT, completed_at TEXT, payload_json TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_provider_threads (
+            provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, provider TEXT, payload_json TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_nodes (
+            node_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, kind TEXT, status TEXT, started_at TEXT, completed_at TEXT, payload_json TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_turn_items (
+            item_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, ordinal INTEGER,
+            type TEXT, status TEXT, updated_at TEXT, payload_json TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_subagents (
+            subagent_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, provider_thread_id TEXT,
+            provider_instance_id TEXT, child_thread_id TEXT, status TEXT,
+            completion_delivery_state TEXT, started_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE orchestration_v2_projection_runtime_requests (
+            request_id TEXT PRIMARY KEY, thread_id TEXT, node_id TEXT, provider_turn_id TEXT,
+            kind TEXT, status TEXT, created_at TEXT, resolved_at TEXT, payload_json TEXT
+        );
+        CREATE TABLE provider_session_runtime (
+            thread_id TEXT PRIMARY KEY, provider_name TEXT, status TEXT, resume_cursor_json TEXT
+        );
+        """
+        XCTAssertEqual(sqlite3_exec(db, schema, nil, nil, nil), SQLITE_OK)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let launch = Date(timeIntervalSince1970: 1_795_700_000)
+        let tBefore = launch.addingTimeInterval(-60)
+        let tStart = launch.addingTimeInterval(5)
+
+        let seed = """
+        INSERT INTO projection_projects VALUES ('p1', 'vpp2', '/Users/kf/work/vpp2');
+        INSERT INTO orchestration_v2_projection_threads VALUES
+            ('import:codex:parent-untouched', 'p1', 'vpp2 4节点训练', 'codex', '\(iso.string(from: tBefore))', '\(iso.string(from: tBefore))', NULL, NULL,
+             '{"lineage":{"parentThreadId":null,"relationshipToParent":null,"rootThreadId":"import:codex:parent-untouched"}}'),
+            ('main-done', 'p1', '调研3D生成模型', 'codex', '\(iso.string(from: tBefore))', '\(iso.string(from: tBefore))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-main","lineage":{"parentThreadId":null,"relationshipToParent":null,"rootThreadId":"main-done"}}'),
+            ('side-empty', 'p1', 'Side chat', 'antigravity', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"lineage":{"parentThreadId":"main-done","relationshipToParent":"fork","rootThreadId":"main-done","sideChat":true}}'),
+            ('side-placeholder-running', 'p1', 'Side chat', 'antigravity', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-side-ph","lineage":{"parentThreadId":"import:codex:parent-untouched","relationshipToParent":"fork","rootThreadId":"import:codex:parent-untouched","sideChat":true}}'),
+            ('side-with-sub', 'p1', '优化2号片子物理效果', 'antigravity', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-side-sub","lineage":{"parentThreadId":"main-done","relationshipToParent":"fork","rootThreadId":"main-done","sideChat":true}}'),
+            ('sub-of-side', 'p1', 'GPT Physics Audit', 'codex', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"activeProviderThreadId":"pt-sub-of-side","lineage":{"parentThreadId":"side-with-sub","relationshipToParent":"subagent","rootThreadId":"main-done"}}'),
+            ('grandchild-of-side', 'p1', 'Deep Helper', 'codex', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"lineage":{"parentThreadId":"sub-of-side","relationshipToParent":"subagent","rootThreadId":"main-done"}}'),
+            ('side-deleted', 'p1', '已删侧聊', 'antigravity', '\(iso.string(from: tBefore))', '\(iso.string(from: tBefore))', NULL, '\(iso.string(from: tStart))',
+             '{"lineage":{"parentThreadId":"main-done","relationshipToParent":"fork","rootThreadId":"main-done","sideChat":true}}'),
+            ('orphan-sub-of-deleted-side', 'p1', 'Orphan Child', 'codex', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"lineage":{"parentThreadId":"side-deleted","relationshipToParent":"subagent","rootThreadId":"main-done"}}'),
+            ('user-fork-active', 'p1', '独立分支实验', 'codex', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"lineage":{"parentThreadId":"main-done","relationshipToParent":"fork","rootThreadId":"main-done"}}'),
+            ('user-fork-empty', 'p1', '空分支', 'codex', '\(iso.string(from: tStart))', '\(iso.string(from: tStart))', NULL, NULL,
+             '{"lineage":{"parentThreadId":"main-done","relationshipToParent":"fork","rootThreadId":"main-done"}}');
+        INSERT INTO orchestration_v2_projection_runs VALUES
+            ('run-main', 'main-done', 1, 'codex', 'completed', '\(iso.string(from: tBefore.addingTimeInterval(-30)))', '\(iso.string(from: tBefore))', '{"providerThreadId":"pt-main"}'),
+            ('run-side-ph', 'side-placeholder-running', 1, 'antigravity', 'running', '\(iso.string(from: tStart))', NULL, '{"providerThreadId":"pt-side-ph"}'),
+            ('run-side-sub', 'side-with-sub', 1, 'antigravity', 'completed', '\(iso.string(from: tStart))', '\(iso.string(from: tStart.addingTimeInterval(2)))', '{"providerThreadId":"pt-side-sub"}'),
+            ('run-sub-of-side', 'sub-of-side', 1, 'codex', 'completed', '\(iso.string(from: tStart))', '\(iso.string(from: tStart.addingTimeInterval(1)))', '{"providerThreadId":"pt-sub-of-side"}'),
+            ('run-grandchild', 'grandchild-of-side', 1, 'codex', 'running', '\(iso.string(from: tStart.addingTimeInterval(1)))', NULL, '{}'),
+            ('run-orphan', 'orphan-sub-of-deleted-side', 1, 'codex', 'running', '\(iso.string(from: tStart))', NULL, '{}'),
+            ('run-fork', 'user-fork-active', 1, 'codex', 'running', '\(iso.string(from: tStart))', NULL, '{}');
+        INSERT INTO orchestration_v2_projection_provider_threads VALUES
+            ('pt-side-ph', 'side-placeholder-running', 'antigravity', '{"nativeThreadRef":{"driver":"antigravity","nativeId":"agy-side-ph-native"}}'),
+            ('pt-side-sub', 'side-with-sub', 'antigravity', '{"nativeThreadRef":{"driver":"antigravity","nativeId":"agy-side-sub-native"}}'),
+            ('pt-sub-of-side', 'sub-of-side', 'codex', '{"nativeThreadRef":{"driver":"codex","nativeId":"codex-sub-of-side-native"}}');
+        """
+        XCTAssertEqual(sqlite3_exec(db, seed, nil, nil, nil), SQLITE_OK)
+
+        let scanner = T3CodeScanner(
+            v2DbPath: v2Path,
+            v1DbPath: dir.appendingPathComponent("missing.sqlite").path,
+            environmentIdPath: envPath,
+            antigravityProvidersRoot: dir.appendingPathComponent("providers").path,
+            handoffGraceSeconds: 0,
+            launchTime: launch,
+            isT3RunningCheck: { true }
+        )
+        let store = MonitorStore(
+            statePath: dir.appendingPathComponent("read_state.json").path,
+            launchTime: launch,
+            suppressSystemSideEffects: true
+        )
+
+        // Initial baseline scan at launch + 6s
+        let res1 = scanner.scanDetailed(lookbackHours: 24, now: launch.addingTimeInterval(6), forceFresh: true)
+        store.applyScanned(res1.sessions, now: launch.addingTimeInterval(6))
+
+        let byId1 = Dictionary(uniqueKeysWithValues: res1.sessions.map { ($0.rawId, $0) })
+        // Untouched import parent, empty side chat, empty fork, rolled-up subagents, deleted side chat must NOT appear
+        XCTAssertNil(byId1["import:codex:parent-untouched"])
+        XCTAssertNil(byId1["side-empty"])
+        XCTAssertNil(byId1["user-fork-empty"])
+        XCTAssertNil(byId1["sub-of-side"])
+        XCTAssertNil(byId1["grandchild-of-side"])
+        XCTAssertNil(byId1["orphan-sub-of-deleted-side"])
+
+        // Main thread must stay .done with 0 subagents (neither side chats nor deleted side chat's orphan subagent leak onto it!)
+        XCTAssertEqual(byId1["main-done"]?.status, .done)
+        XCTAssertEqual(byId1["main-done"]?.activeSubagents, 0)
+
+        // Placeholder side chat on untouched import parent shows parent's title with "侧聊 · " prefix
+        XCTAssertEqual(byId1["side-placeholder-running"]?.status, .running)
+        XCTAssertEqual(byId1["side-placeholder-running"]?.title, "侧聊 · vpp2 4节点训练")
+        XCTAssertEqual(L10n(isEnglish: true).sessionTitle("侧聊 · vpp2 4节点训练"), "Side chat · vpp2 4节点训练")
+
+        // Side chat with completed own run + active depth-2 grandchild subagent stays .running (rolled up onto side chat!)
+        XCTAssertEqual(byId1["side-with-sub"]?.status, .running)
+        XCTAssertEqual(byId1["side-with-sub"]?.title, "侧聊 · 优化2号片子物理效果")
+        XCTAssertEqual(byId1["side-with-sub"]?.activeSubagents, 1)
+
+        // Regular user fork is emitted independently without "侧聊 · " prefix
+        XCTAssertEqual(byId1["user-fork-active"]?.status, .running)
+        XCTAssertEqual(byId1["user-fork-active"]?.title, "独立分支实验")
+
+        // Underlying native IDs of both side chats and side chat's rolled-up subagent are properly owned/deduped
+        XCTAssertTrue(res1.ownedNativeSessionIds.contains("antigravity:agy-side-ph-native"))
+        XCTAssertTrue(res1.ownedNativeSessionIds.contains("antigravity:agy-side-sub-native"))
+        XCTAssertTrue(res1.ownedNativeSessionIds.contains("codex:codex-sub-of-side-native"))
+        XCTAssertEqual(
+            scanner.deepLinkURL(forThreadId: "side-with-sub", scheme: "t3code")?.absoluteString,
+            "t3code://threads/env-sidechat-test/side-with-sub"
+        )
+
+        // While grandchild subagent is still running, side-with-sub must NOT confirm completion!
+        let resStillSub = scanner.scanDetailed(lookbackHours: 24, now: launch.addingTimeInterval(14), forceFresh: true)
+        store.applyScanned(resStillSub.sessions, now: launch.addingTimeInterval(14))
+        XCTAssertFalse(store.confirmedCompletionIds.contains("t3code:side-with-sub"))
+
+        // Pending runtime request on side chat's subagent must escalate to side-with-sub (.needsInput), NOT main-done!
+        XCTAssertEqual(sqlite3_exec(db, """
+            INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+                ('req-1', 'sub-of-side', 'node-1', 'turn-1', 'approval', 'pending', '\(iso.string(from: launch.addingTimeInterval(15)))', NULL, '{"command":"rm -rf tmp"}');
+            """, nil, nil, nil), SQLITE_OK)
+        let resReq = scanner.scanDetailed(lookbackHours: 24, now: launch.addingTimeInterval(16), forceFresh: true)
+        let byIdReq = Dictionary(uniqueKeysWithValues: resReq.sessions.map { ($0.rawId, $0) })
+        XCTAssertEqual(byIdReq["side-with-sub"]?.status, .needsInput)
+        XCTAssertEqual(byIdReq["main-done"]?.status, .done)
+
+        // Resolve request & finish grandchild subagent and placeholder side chat -> both side chats MUST trigger completion alerts!
+        let tFinish = launch.addingTimeInterval(20)
+        XCTAssertEqual(sqlite3_exec(db, """
+            UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved', resolved_at = '\(iso.string(from: tFinish))' WHERE request_id = 'req-1';
+            UPDATE orchestration_v2_projection_runs SET status = 'completed', completed_at = '\(iso.string(from: tFinish))' WHERE run_id IN ('run-grandchild', 'run-side-ph');
+            UPDATE orchestration_v2_projection_threads SET title = 'Optimize 200K Training Speed', updated_at = '\(iso.string(from: tFinish))' WHERE thread_id = 'side-placeholder-running';
+            UPDATE orchestration_v2_projection_threads SET updated_at = '\(iso.string(from: tFinish))' WHERE thread_id IN ('side-with-sub', 'grandchild-of-side');
+            """, nil, nil, nil), SQLITE_OK)
+
+        // Tick across the 4.5s settle window
+        for dt in [21.0, 23.0, 25.0, 27.0] {
+            let tick = launch.addingTimeInterval(dt)
+            let r = scanner.scanDetailed(lookbackHours: 24, now: tick, forceFresh: true)
+            store.applyScanned(r.sessions, now: tick)
+        }
+        XCTAssertEqual(store.confirmedCompletionIds.filter { $0 == "t3code:side-placeholder-running" }.count, 1)
+        XCTAssertEqual(store.confirmedCompletionIds.filter { $0 == "t3code:side-with-sub" }.count, 1)
+        XCTAssertFalse(store.confirmedCompletionIds.contains("t3code:side-empty"))
+        XCTAssertFalse(store.confirmedCompletionIds.contains("t3code:main-done"))
+    }
 }

@@ -1246,7 +1246,7 @@ final class MonitorStore: ObservableObject {
                             deepLink: deepLinkString(for: item),
                             completedAt: nil,
                             title: t.needsInputNotifTitle(kind: item.kind, project: t.project(item.project)),
-                            subtitle: item.title,
+                            subtitle: t.sessionTitle(item.title),
                             body: t.needsInputNotifBody(kind: item.kind),
                             bundleID: item.kind.targetBundleIDs.first ?? ""
                         )
@@ -1288,7 +1288,7 @@ final class MonitorStore: ObservableObject {
                             deepLink: deepLinkString(for: item),
                             completedAt: compTs,
                             title: t.finishNotifTitle(kind: item.kind, project: t.project(item.project), isError: item.status == .error),
-                            subtitle: item.title,
+                            subtitle: t.sessionTitle(item.title),
                             body: t.finishNotifBody(kind: item.kind),
                             bundleID: item.kind.targetBundleIDs.first ?? ""
                         )

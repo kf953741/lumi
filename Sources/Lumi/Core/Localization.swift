@@ -383,7 +383,18 @@ public struct L10n: Sendable {
     public func project(_ raw: String) -> String {
         guard isEnglish else { return raw }
         if raw == "全局" { return "Global" }
+        if raw == "独立对话" { return "Standalone Chat" }
         if raw == "Gemini 桌面版" { return "Gemini Desktop" }
+        return raw
+    }
+
+    public func sessionTitle(_ raw: String) -> String {
+        guard isEnglish else { return raw }
+        if raw == "侧聊" { return "Side chat" }
+        if raw.hasPrefix("侧聊 · ") {
+            return "Side chat · " + String(raw.dropFirst("侧聊 · ".count))
+        }
+        if raw == "T3 Code 对话" { return "T3 Code Chat" }
         return raw
     }
 }

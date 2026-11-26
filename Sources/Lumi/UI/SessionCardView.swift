@@ -106,7 +106,7 @@ struct BentoSessionRow: View {
                     leadingAppIconWithBadge
 
                     VStack(alignment: .leading, spacing: compact ? 2 : 3.5) {
-                        Text(session.title)
+                        Text(l10n.sessionTitle(session.title))
                             .font(.system(size: compact ? 11.8 : 12.2, weight: .semibold))
                             .foregroundColor(compact ? surface.secondaryText : surface.primaryText)
                             .lineLimit(1)
